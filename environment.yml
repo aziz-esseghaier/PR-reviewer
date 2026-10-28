@@ -1,0 +1,12 @@
+# Conda environment for the PR reviewer.
+# Create it with: conda env create -f environment.yml
+# Conda only supplies Python and pip. The package dependencies live in pyproject.toml.
+name: pr-reviewer
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      - -e .[dev]
