@@ -1,0 +1,25 @@
+# LLM providers and named model profiles.
+# Code and experiments pick a model by profile name. Each experiment uses one profile only.
+
+
+providers:
+  groq:
+    base_url: https://api.groq.com/openai/v1
+    api_key_env: GROQ_API_KEY
+  google:
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+    api_key_env: GEMINI_API_KEY
+
+# Profile names follow <provider>-<model>
+models:
+  groq-gpt-oss-120b:
+    provider: groq
+    model: openai/gpt-oss-120b
+    temperature: 0
+    max_tokens: 1024
+
+  google-gemini-3.5-flash:
+    provider: google
+    model: gemini-3.5-flash
+    temperature: 0
+    max_tokens: 1024

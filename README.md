@@ -25,6 +25,16 @@ pr-reviewer db status         # show the server, pgvector and applied migrations
 docker compose down           # stop it (the data stays in the pgdata volume)
 ```
 
+## Models
+
+`configs/models.yaml` lists the LLM providers and named model profiles. Code and experiments pick a model by its profile name. API keys stay in `.env`.
+
+```
+pr-reviewer llm models               # list the profiles and whether their keys are set
+pr-reviewer llm available groq       # list the models your key can use at a provider
+pr-reviewer llm ping <profile>       # send a short test prompt and show the reply and token counts
+```
+
 ## Checks
 
 ```

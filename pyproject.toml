@@ -14,6 +14,10 @@ license-files = ["LICENSE"]
 dependencies = [
     "psycopg[binary]>=3.2",  # PostgreSQL driver, also used by LangGraph's checkpointer
     "python-dotenv>=1.0",  # loads settings and keys from .env
+    "openai>=3.40",  # official SDK, pointed at each provider's OpenAI-compatible endpoint
+    "httpx2>=2.12",  # HTTP client under the OpenAI SDK (v3+); tests swap in a fake transport
+    "pydantic>=2.14",  # validates configs, and later the LLM's JSON output
+    "pyyaml>=6.0",  # reads configs/*.yaml
 ]
 
 [project.optional-dependencies]
@@ -21,6 +25,7 @@ dev = [
     "pytest>=8.3",
     "ruff>=0.8",
     "mypy>=1.13",
+    "types-PyYAML",  # type hints for pyyaml, used by mypy
 ]
 
 [project.scripts]
@@ -43,6 +48,8 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 python_version = "3.12"
 strict = true
 files = ["src", "tests"]
+# Lets mypy understand pydantic models, for example their constructor arguments.
+plugins = ["pydantic.mypy"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
