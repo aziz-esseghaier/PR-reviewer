@@ -2,9 +2,14 @@
 
 `LLMClient` is tied to one model profile from configs/models.yaml and sends chat requests to it
 through the OpenAI SDK. Groq and Google AI Studio both accept the OpenAI request format, so one
-SDK pointed at a different base URL covers both. Before calling the provider, the client checks
-its response cache (see core/cache.py) and saves new replies there. Rate limits and the usage
-log plug in here later too.
+SDK pointed at a different base URL covers both.
+
+For each request the client:
+1. answers from the response cache if it has seen the request before (core/cache.py);
+2. otherwise waits, if needed, to stay under the model's per-minute limits (core/limits.py);
+3. sends it, retrying after rate limits, overload and timeouts (core/limits.py);
+4. saves the reply in the cache.
+The usage log will plug in here too.
 
 The file also lists a provider's models and turns provider errors into short hints.
 Other modules import it; the file isn't run directly.
@@ -17,6 +22,7 @@ from typing import Literal, Protocol, TypedDict
 import httpx2
 import openai
 from openai.types.chat import (
+    ChatCompletion,
     ChatCompletionAssistantMessageParam,
     ChatCompletionMessageParam,
     ChatCompletionSystemMessageParam,
@@ -25,6 +31,14 @@ from openai.types.chat import (
 from pydantic import BaseModel, ConfigDict
 
 from pr_reviewer.core.config import ModelsConfig, ProviderConfig, read_api_key
+from pr_reviewer.core.limits import (
+    Clock,
+    RetryPolicy,
+    SystemClock,
+    Throttle,
+    call_with_retries,
+    estimate_tokens,
+)
 
 
 class ChatMessage(TypedDict):
@@ -77,8 +91,11 @@ class LLMResponse(BaseModel):
         input_tokens (int): Tokens in the prompt.
         output_tokens (int): Tokens in the reply.
         latency_s (float): Seconds from sending the request to receiving the reply.
-        cached (bool): True if the reply came from the cache. Tokens and timing are then those
-            of the original call, and no request was sent this time.
+        attempts (int): Requests it took, 1 if the first one worked. Retries add to it.
+        waited_s (float): Seconds spent waiting before the reply: for the per-minute limits
+            and between retries.
+        cached (bool): True if the reply came from the cache. Tokens, timing, attempts and
+            waits are then those of the original call, and no request was sent this time.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -91,6 +108,8 @@ class LLMResponse(BaseModel):
     input_tokens: int
     output_tokens: int
     latency_s: float
+    attempts: int = 1
+    waited_s: float = 0.0
     cached: bool = False
 
 
@@ -145,7 +164,7 @@ def _make_sdk(
         base_url=provider.base_url,
         timeout=provider.timeout_s,
         # The SDK would otherwise retry rate-limit errors on its own, out of our sight.
-        # We handle retries ourselves, so every request is counted and logged.
+        # core/limits.py retries instead, so every request is counted and logged.
         max_retries=0,
         http_client=http_client,
     )
@@ -176,7 +195,7 @@ class LLMClient:
 
     Attributes:
         name (str): Profile name, such as "groq-gpt-oss-120b".
-        profile (ModelProfile): The model and its sampling settings.
+        profile (ModelProfile): The model, its sampling settings and its limits.
         provider_name (str): Name of the provider, such as "google".
     """
 
@@ -186,6 +205,8 @@ class LLMClient:
         config: ModelsConfig,
         *,
         cache: ResponseCache | None = None,
+        retry_policy: RetryPolicy | None = None,
+        clock: Clock | None = None,
         api_key: str | None = None,
         http_client: httpx2.Client | None = None,
     ) -> None:
@@ -196,6 +217,9 @@ class LLMClient:
             config (ModelsConfig): The loaded model config.
             cache (ResponseCache | None): Where to look up and save replies. None turns
                 caching off, so every call goes to the provider.
+            retry_policy (RetryPolicy | None): How many tries and how long to wait after
+                temporary errors. None uses the defaults.
+            clock (Clock | None): Used to wait. Tests pass a fake one. None uses the real clock.
             api_key (str | None): Key to use. None reads it from the provider's environment
                 variable.
             http_client (httpx2.Client | None): HTTP client for the SDK. Tests pass one with a
@@ -208,6 +232,14 @@ class LLMClient:
         self.profile = config.profile(name)
         self.provider_name = self.profile.provider
         self._cache = cache
+        self._retry_policy = retry_policy or RetryPolicy()
+        self._clock = clock or SystemClock()
+        self._throttle = Throttle(
+            self.profile.limits.requests_per_minute,
+            self.profile.limits.tokens_per_minute,
+            clock=self._clock,
+            label=name,
+        )
         self._sdk = _make_sdk(config.provider(self.provider_name), api_key, http_client)
 
     def complete(self, messages: Sequence[ChatMessage], *, sample: int = 0) -> LLMResponse:
@@ -224,8 +256,10 @@ class LLMClient:
             LLMResponse: The reply text, token counts, timing and whether it came from the cache.
 
         Raises:
-            openai.APIError: If the provider rejects the request or can't be reached.
-                openai.RateLimitError is the one to watch on free tiers.
+            openai.APIError: If the provider rejects the request, or still fails after all
+                retries.
+            LimitError: If waiting won't help: the daily quota looks used up, or the request
+                is bigger than the model's per-minute token budget.
             LLMError: If the provider answers without any reply.
         """
         request = LLMRequest(
@@ -247,7 +281,7 @@ class LLMClient:
         return response
 
     def _send(self, request: LLMRequest) -> LLMResponse:
-        """Send a request to the provider and read its reply.
+        """Send a request to the provider, within the limits and with retries, and read the reply.
 
         Args:
             request (LLMRequest): The model, messages and settings to send.
@@ -256,17 +290,40 @@ class LLMClient:
             LLMResponse: The provider's reply, with cached set to False.
 
         Raises:
-            openai.APIError: If the provider rejects the request or can't be reached.
+            openai.APIError: If the provider rejects the request or still fails after all
+                retries.
+            LimitError: If waiting won't help.
             LLMError: If the provider answers without any reply.
         """
-        started = time.perf_counter()
-        completion = self._sdk.chat.completions.create(
-            model=request.model,
-            messages=[_to_sdk_message(message) for message in request.messages],
-            temperature=request.temperature,
-            max_tokens=request.max_tokens,
+        estimate = estimate_tokens(
+            [message["content"] for message in request.messages], request.max_tokens
         )
-        latency_s = time.perf_counter() - started
+        throttle_wait_s = 0.0
+
+        def one_try() -> tuple[ChatCompletion, float]:
+            """Wait for room under the limits, then send the request once.
+
+            Returns:
+                tuple[ChatCompletion, float]: The SDK's reply and its latency in seconds.
+            """
+            nonlocal throttle_wait_s
+            slot, waited_s = self._throttle.reserve(estimate)
+            throttle_wait_s += waited_s
+            started = time.perf_counter()
+            completion = self._sdk.chat.completions.create(
+                model=request.model,
+                messages=[_to_sdk_message(message) for message in request.messages],
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+            )
+            if completion.usage is not None:
+                slot.tokens = completion.usage.total_tokens  # replace the estimate
+            return completion, time.perf_counter() - started
+
+        result = call_with_retries(
+            one_try, label=self.name, policy=self._retry_policy, clock=self._clock
+        )
+        completion, latency_s = result.value
         if not completion.choices:
             raise LLMError(f"{self.name}: the provider returned no reply")
         choice = completion.choices[0]
@@ -280,6 +337,8 @@ class LLMClient:
             input_tokens=usage.prompt_tokens if usage else 0,
             output_tokens=usage.completion_tokens if usage else 0,
             latency_s=round(latency_s, 3),
+            attempts=result.attempts,
+            waited_s=round(result.waited_s + throttle_wait_s, 3),
         )
 
 

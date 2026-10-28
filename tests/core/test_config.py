@@ -60,6 +60,21 @@ def test_valid_config_loads_with_defaults(tmp_path: Path) -> None:
     assert config.provider("fake").timeout_s == 120.0
 
 
+def test_limits_are_read_and_checked(tmp_path: Path) -> None:
+    """Check that per-minute limits load, and a zero or negative limit is refused."""
+    limits = "    limits:\n      requests_per_minute: 30\n      tokens_per_minute: 8000\n"
+    config = load_models_config(write_config(tmp_path, VALID_CONFIG + limits))
+    assert config.profile("fake-small").limits.tokens_per_minute == 8000
+    assert (
+        load_models_config(write_config(tmp_path, VALID_CONFIG))
+        .profile("fake-small")
+        .limits.requests_per_minute
+        is None
+    )
+    with pytest.raises(ConfigError, match="tokens_per_minute"):
+        load_models_config(write_config(tmp_path, VALID_CONFIG + limits.replace("8000", "0")))
+
+
 def test_unknown_provider_is_rejected(tmp_path: Path) -> None:
     """Check that a profile pointing at a provider that doesn't exist fails with its name."""
     text = VALID_CONFIG.replace("provider: fake", "provider: nowhere")

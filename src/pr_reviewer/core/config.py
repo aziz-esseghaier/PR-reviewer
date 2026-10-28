@@ -1,10 +1,10 @@
 """Project settings: the .env file and the model config.
 
 Loads .env into the environment (API keys, database settings), finds and reads
-configs/models.yaml, and checks it with pydantic, so a typo, an unknown provider or a missing
-key fails at startup with a clear message. Error messages never repeat the values you typed,
-in case a key ended up in the wrong place. Also reads a provider's API key from the
-environment.
+configs/models.yaml (providers, model profiles and their per-minute limits), and checks it
+with pydantic, so a typo, an unknown provider or a missing key fails at startup with a clear
+message. Error messages never repeat the values you typed, in case a key ended up in the wrong
+place. Also reads a provider's API key from the environment.
 
 Imported by other modules; the file isn't run directly.
 """
@@ -77,14 +77,30 @@ class ProviderConfig(BaseModel):
     timeout_s: float = Field(default=120.0, gt=0)
 
 
+class ModelLimits(BaseModel):
+    """A model's free-tier limits per minute. The client waits rather than go over them.
+
+    Attributes:
+        requests_per_minute (int | None): Most requests in any 60 seconds. None means no limit.
+        tokens_per_minute (int | None): Most tokens, prompt plus reply, in any 60 seconds.
+            None means no limit.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    requests_per_minute: int | None = Field(default=None, gt=0)
+    tokens_per_minute: int | None = Field(default=None, gt=0)
+
+
 class ModelProfile(BaseModel):
-    """One named model choice: the provider, the model and its sampling settings.
+    """One named model choice: the provider, the model, its sampling settings and its limits.
 
     Attributes:
         provider (str): Name of an entry in the providers section.
         model (str): Model ID as the provider spells it.
         temperature (float): Sampling randomness. 0 gives the most repeatable answers.
         max_tokens (int): Longest reply the model may write, in tokens.
+        limits (ModelLimits): Per-minute limits to stay under. Empty means no limits.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -93,6 +109,7 @@ class ModelProfile(BaseModel):
     model: str = Field(min_length=1)
     temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     max_tokens: int = Field(default=1024, gt=0)
+    limits: ModelLimits = ModelLimits()
 
 
 class ModelsConfig(BaseModel):

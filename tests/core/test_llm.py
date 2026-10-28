@@ -1,7 +1,8 @@
 """Tests for the LLM client in core/llm.py.
 
-Checks what the client sends to a provider, how it reads replies and errors, and how it uses
-the response cache. Every test runs against a fake provider, so none uses API quota or keys.
+Checks what the client sends to a provider, how it reads replies and errors, how it uses the
+response cache, and how it retries and waits for per-minute limits. Every test runs against a
+fake provider and a fake clock, so none uses API quota or keys, and none really waits.
 
 How to run (from the project folder):
     pytest tests/core/test_llm.py
@@ -15,7 +16,7 @@ import pytest
 
 from pr_reviewer.core.config import ConfigError
 from pr_reviewer.core.llm import ChatMessage, LLMClient, explain_api_error, list_provider_models
-from tests.fakes import FAKE_CONFIG, FakeProvider, MemoryCache, fake_client
+from tests.fakes import FAKE_CONFIG, FakeClock, FakeProvider, MemoryCache, fake_client
 
 
 def test_complete_sends_profile_settings_and_reads_reply() -> None:
@@ -94,19 +95,55 @@ def test_empty_reply_is_not_cached() -> None:
     assert cache.entries == {}
 
 
-def test_rate_limit_is_raised_without_hidden_retries() -> None:
-    """Check that a 429 reaches our code after exactly one request, with no SDK retries."""
-    calls = 0
+def test_overloaded_provider_is_retried(caplog: pytest.LogCaptureFixture) -> None:
+    """Check that two 503s are waited out, logged, and counted in the reply."""
+    provider = FakeProvider("Hi there.", failures=[503, 503])
+    clock = FakeClock()
+    response = fake_client(provider, clock=clock).complete([{"role": "user", "content": "Hello"}])
 
-    def handler(request: httpx2.Request) -> httpx2.Response:
-        nonlocal calls
-        calls += 1
-        return httpx2.Response(429, json={"error": {"message": "Rate limit reached"}})
+    assert response.text == "Hi there."
+    assert len(provider.requests) == 3
+    assert response.attempts == 3
+    assert response.waited_s == pytest.approx(sum(clock.sleeps), abs=0.01)
+    assert "HTTP 503 overloaded, waiting" in caplog.text
 
+
+def test_gives_up_after_all_tries_without_hidden_sdk_retries() -> None:
+    """Check that persistent 429s stop after our 6 tries, and the SDK adds none of its own."""
+    provider = FakeProvider(failures=[429] * 10)
     with pytest.raises(openai.RateLimitError) as exc_info:
-        fake_client(handler).complete([{"role": "user", "content": "Hello"}])
-    assert calls == 1
+        fake_client(provider).complete([{"role": "user", "content": "Hello"}])
+    assert len(provider.requests) == 6
     assert "Wait a bit" in explain_api_error(exc_info.value)
+
+
+def test_rejected_key_is_not_retried() -> None:
+    """Check that a 401 fails after one request, since asking again can't fix it."""
+    provider = FakeProvider(failures=[401])
+    with pytest.raises(openai.AuthenticationError):
+        fake_client(provider).complete([{"role": "user", "content": "Hello"}])
+    assert len(provider.requests) == 1
+
+
+def test_client_waits_to_stay_under_requests_per_minute() -> None:
+    """Check that the third request in a minute waits, on a profile allowing 2 per minute."""
+    clock = FakeClock()
+    client = fake_client(FakeProvider(), clock=clock, profile="fake-limited")
+    for text in ["one", "two", "three"]:
+        response = client.complete([{"role": "user", "content": text}])
+    assert clock.sleeps == [pytest.approx(60.0)]
+    assert response.waited_s == pytest.approx(60.0)
+
+
+def test_cache_hits_skip_the_throttle() -> None:
+    """Check that answers from the cache don't count against the per-minute limits."""
+    clock = FakeClock()
+    provider = FakeProvider()
+    client = fake_client(provider, MemoryCache(), clock=clock, profile="fake-limited")
+    for _ in range(5):
+        client.complete([{"role": "user", "content": "same"}])
+    assert len(provider.requests) == 1
+    assert clock.sleeps == []
 
 
 def test_missing_api_key_names_the_variable(monkeypatch: pytest.MonkeyPatch) -> None:

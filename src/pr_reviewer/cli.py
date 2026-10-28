@@ -1,7 +1,8 @@
 """Command-line interface of the PR reviewer: the `pr-reviewer` command.
 
 Parses the command line and runs the matching command. Setup, database and provider errors
-are shown as a short hint with exit code 1, not as a traceback.
+are shown as a short hint with exit code 1, not as a traceback. Waits for rate limits and
+retries are reported as they happen, on stderr.
 
 How to run (inside the conda env, from the project folder):
     pr-reviewer --help                        list the commands
@@ -15,6 +16,7 @@ How to run (inside the conda env, from the project folder):
 """
 
 import argparse
+import logging
 import os
 import sys
 from collections.abc import Callable, Sequence
@@ -26,6 +28,7 @@ import psycopg
 from pr_reviewer import __version__
 from pr_reviewer.core.cache import PostgresCache, cache_stats
 from pr_reviewer.core.config import ConfigError, load_env, load_models_config, read_api_key
+from pr_reviewer.core.limits import LimitError
 from pr_reviewer.core.llm import (
     ChatMessage,
     LLMClient,
@@ -40,6 +43,30 @@ from pr_reviewer.db.migrate import applied_migrations, discover_migrations, migr
 Handler = Callable[[argparse.Namespace], int]
 
 PING_PROMPT = "In one short sentence, what is a code review?"
+
+
+class _StderrHandler(logging.Handler):
+    """Writes log lines to sys.stderr as it is at that moment.
+
+    A plain StreamHandler keeps the stream it started with. pytest swaps sys.stderr for each
+    test, so that stream could be closed by the time a later test logs something.
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Print one log line.
+
+        Args:
+            record (logging.LogRecord): The log entry to print.
+        """
+        print(self.format(record), file=sys.stderr)
+
+
+def _show_progress_messages() -> None:
+    """Print our own log lines (waits and retries) on stderr, once per process."""
+    logger = logging.getLogger("pr_reviewer")
+    if not any(isinstance(handler, _StderrHandler) for handler in logger.handlers):
+        logger.addHandler(_StderrHandler())
+        logger.setLevel(logging.INFO)
 
 
 def _db_migrate(args: argparse.Namespace) -> int:
@@ -88,7 +115,7 @@ def _db_status(args: argparse.Namespace) -> int:
 
 
 def _llm_models(args: argparse.Namespace) -> int:
-    """Print each model profile and whether its provider's API key is set.
+    """Print each model profile, its settings and limits, and whether its API key is set.
 
     Args:
         args (argparse.Namespace): Parsed arguments. Uses `config`.
@@ -100,10 +127,11 @@ def _llm_models(args: argparse.Namespace) -> int:
     for name, profile in config.models.items():
         key_env = config.provider(profile.provider).api_key_env
         key_state = "key set" if os.environ.get(key_env, "").strip() else f"{key_env} missing"
-        print(
-            f"{name:<24} {profile.provider:<8} {profile.model:<36} "
-            f"temperature={profile.temperature} max_tokens={profile.max_tokens}  ({key_state})"
-        )
+        rpm = profile.limits.requests_per_minute or "no limit"
+        tpm = profile.limits.tokens_per_minute or "no limit"
+        print(f"{name}  ({profile.provider}, {profile.model}, {key_state})")
+        print(f"    temperature={profile.temperature}  max_tokens={profile.max_tokens}")
+        print(f"    per minute: {rpm} requests, {tpm} tokens")
     return 0
 
 
@@ -143,6 +171,8 @@ def _print_reply(response: LLMResponse, cache_used: bool) -> None:
     print(
         f"Time:    {response.latency_s:.2f} s{original} (finish reason: {response.finish_reason})"
     )
+    if not response.cached and (response.attempts > 1 or response.waited_s > 0):
+        print(f"Waited:  {response.waited_s:.1f} s in total, {response.attempts} tries")
 
 
 def _llm_ping(args: argparse.Namespace) -> int:
@@ -278,6 +308,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.print_help()
         return 0
     load_env()
+    _show_progress_messages()
     try:
         return handler(args)
     except ConfigError as exc:
@@ -291,6 +322,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     except openai.APIError as exc:
         print(explain_api_error(exc), file=sys.stderr)
+    except LimitError as exc:
+        print(f"Stopped: {exc}", file=sys.stderr)
     except LLMError as exc:
         print(f"Unusable model reply: {exc}", file=sys.stderr)
     return 1
