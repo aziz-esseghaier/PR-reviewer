@@ -14,10 +14,22 @@ cp .env.example .env          # then fill in your API keys
 
 When `pyproject.toml` gets new dependencies, run `pip install -e ".[dev]"` again inside the environment.
 
+## Database
+
+PostgreSQL (with pgvector) runs in Docker. Set a real `POSTGRES_PASSWORD` in `.env` before the first start, because Postgres only reads it when it creates the data volume.
+
+```
+docker compose up -d          # start the database
+pr-reviewer db migrate        # create or update the tables
+pr-reviewer db status         # show the server, pgvector and applied migrations
+docker compose down           # stop it (the data stays in the pgdata volume)
+```
+
 ## Checks
 
 ```
-pytest
+pytest                        # integration tests are skipped when the database isn't running
+pytest -m "not integration"   # unit tests only
 ruff check .
 mypy
 ```
