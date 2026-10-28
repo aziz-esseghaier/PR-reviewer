@@ -35,6 +35,19 @@ pr-reviewer llm available groq       # list the models your key can use at a pro
 pr-reviewer llm ping <profile>       # send a short test prompt and show the reply and token counts
 ```
 
+## Response cache
+
+Every model reply is saved in PostgreSQL (table `llm_cache`). Asking the exact same thing again (same model, messages and settings) is answered from the database, so re-runs use no API quota and give the same answers. The cache never expires.
+
+```
+pr-reviewer llm ping <profile> --prompt "..."               # the second identical call is a cache hit
+pr-reviewer llm ping <profile> --prompt "..." --sample 1    # ask again for a new answer (cached separately)
+pr-reviewer llm ping <profile> --no-cache                   # skip the cache (works without the database)
+pr-reviewer cache stats                                     # cached replies per provider and model
+```
+
+After pulling new code, run `pr-reviewer db migrate` to create any new tables.
+
 ## Checks
 
 ```

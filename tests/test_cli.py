@@ -1,11 +1,22 @@
-"""Tests for the command-line entry point."""
+"""Tests for the `pr-reviewer` command line in cli.py.
+
+Checks that each command prints the right thing and that setup problems give a short hint with
+exit code 1. No test calls a real LLM provider. The test marked `integration` uses a throwaway
+database and is skipped when Postgres isn't running.
+
+How to run (from the project folder):
+    pytest tests/test_cli.py
+"""
 
 from pathlib import Path
 
+import psycopg
 import pytest
+from psycopg.conninfo import conninfo_to_dict
 
 from pr_reviewer import __version__
 from pr_reviewer.cli import main
+from pr_reviewer.db.migrate import migrate
 
 MODELS_CONFIG = """
 providers:
@@ -81,3 +92,16 @@ def test_llm_ping_unknown_profile_lists_known_ones(
     """Check that a typo in the profile name exits 1 and shows the valid names."""
     assert main(["llm", "ping", "fake-smal", "--config", str(models_config)]) == 1
     assert "fake-small" in capsys.readouterr().err
+
+
+@pytest.mark.integration
+def test_cache_stats_reports_an_empty_cache(
+    test_db_url: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Check that `cache stats` works on a freshly migrated database and says it's empty."""
+    with psycopg.connect(test_db_url, autocommit=True) as conn:
+        migrate(conn)
+    # Point the command at the throwaway database instead of the real one.
+    monkeypatch.setenv("POSTGRES_DB", str(conninfo_to_dict(test_db_url)["dbname"]))
+    assert main(["cache", "stats"]) == 0
+    assert "The cache is empty." in capsys.readouterr().out

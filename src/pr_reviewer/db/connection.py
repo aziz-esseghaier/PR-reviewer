@@ -1,4 +1,9 @@
-"""Open connections to the project's PostgreSQL database."""
+"""Connection helpers for the project's PostgreSQL database.
+
+Builds the connection string from the POSTGRES_* settings in .env, opens connections, and
+answers small questions about the database: server version, installed extensions and
+whether a table exists. Other modules import these helpers; the file isn't run directly.
+"""
 
 import os
 from collections.abc import Mapping
@@ -89,3 +94,17 @@ def extension_version(conn: psycopg.Connection[TupleRow], extension: str) -> str
         "SELECT extversion FROM pg_extension WHERE extname = %s", (extension,)
     ).fetchone()
     return str(row[0]) if row else None
+
+
+def table_exists(conn: psycopg.Connection[TupleRow], table: str) -> bool:
+    """Check whether a table exists, without changing anything.
+
+    Args:
+        conn (psycopg.Connection[TupleRow]): Open database connection.
+        table (str): Table name, such as "llm_cache".
+
+    Returns:
+        bool: True if the table exists.
+    """
+    row = conn.execute("SELECT to_regclass(%s)", (table,)).fetchone()
+    return row is not None and row[0] is not None

@@ -1,4 +1,13 @@
-"""Load project settings from the environment, the .env file and the YAML configs."""
+"""Project settings: the .env file and the model config.
+
+Loads .env into the environment (API keys, database settings), finds and reads
+configs/models.yaml, and checks it with pydantic, so a typo, an unknown provider or a missing
+key fails at startup with a clear message. Error messages never repeat the values you typed,
+in case a key ended up in the wrong place. Also reads a provider's API key from the
+environment.
+
+Imported by other modules; the file isn't run directly.
+"""
 
 import os
 from pathlib import Path

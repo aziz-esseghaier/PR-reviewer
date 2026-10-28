@@ -1,4 +1,11 @@
-"""Shared pytest fixtures."""
+"""Shared pytest fixtures, available to every test file without importing them.
+
+`test_db_url` gives a test an empty throwaway database (named POSTGRES_DB + "_test") in the
+project's Postgres container, and drops it afterwards, so tests never touch real data. Tests
+that use it are skipped when Postgres isn't running.
+
+pytest loads this file on its own when you run the tests (`pytest`); it isn't run directly.
+"""
 
 import os
 from collections.abc import Iterator

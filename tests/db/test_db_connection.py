@@ -1,4 +1,11 @@
-"""Tests for building the database connection string."""
+"""Tests for the connection string built in db/connection.py.
+
+Checks that the POSTGRES_* settings end up in the connection string, that local defaults fill
+in the host and port, and that a missing setting gives a clear error. No database needed.
+
+How to run (from the project folder):
+    pytest tests/db/test_db_connection.py
+"""
 
 import pytest
 from psycopg.conninfo import conninfo_to_dict

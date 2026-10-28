@@ -1,4 +1,14 @@
-"""Tests for the SQL migration runner."""
+"""Tests for the migration runner in db/migrate.py.
+
+Checks that migration files are found in number order and badly named ones are refused. The
+tests marked `integration` apply migrations to a throwaway database: each runs once, pgvector
+gets enabled, and a broken migration leaves nothing behind. They are skipped when Postgres
+isn't running.
+
+How to run (from the project folder):
+    pytest tests/db/test_migrate.py                       all migration tests
+    pytest tests/db/test_migrate.py -m "not integration"  without the database
+"""
 
 from pathlib import Path
 

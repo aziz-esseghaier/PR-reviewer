@@ -1,4 +1,13 @@
-"""Apply numbered SQL migration files to the database, in order, once each."""
+"""Migration runner: brings the database tables up to date.
+
+A migration is a numbered SQL file in db/migrations/, such as 0002_llm_cache.sql. This module
+finds those files, applies the ones the database doesn't have yet in number order, and records
+each one in the schema_migrations table so it never runs twice.
+
+How to run (from the project folder, with the database up):
+    pr-reviewer db migrate     apply new migrations
+    pr-reviewer db status      show which migrations are applied
+"""
 
 import re
 from dataclasses import dataclass
@@ -7,6 +16,8 @@ from pathlib import Path
 
 import psycopg
 from psycopg.rows import TupleRow
+
+from pr_reviewer.db.connection import table_exists
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 # Four-digit version, then a lowercase name: 0001_enable_pgvector.sql
@@ -82,8 +93,7 @@ def applied_migrations(conn: psycopg.Connection[TupleRow]) -> dict[str, datetime
         dict[str, datetime]: Applied versions mapped to the time they were applied.
             Empty if the database has never been migrated.
     """
-    exists = conn.execute("SELECT to_regclass('schema_migrations')").fetchone()
-    if exists is None or exists[0] is None:
+    if not table_exists(conn, "schema_migrations"):
         return {}
     rows = conn.execute("SELECT version, applied_at FROM schema_migrations").fetchall()
     return {version: applied_at for version, applied_at in rows}

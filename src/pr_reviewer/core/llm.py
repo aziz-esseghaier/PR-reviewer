@@ -1,13 +1,18 @@
-"""Send chat requests to one configured model through the OpenAI SDK.
+"""LLM client: the single route from our code to a language model.
 
-Groq and Google AI Studio both accept the OpenAI request format, so one SDK pointed at a
-different base URL covers both. Every model call in the project goes through
-`LLMClient.complete`, which is where the cache, rate limits and usage log plug in later.
+`LLMClient` is tied to one model profile from configs/models.yaml and sends chat requests to it
+through the OpenAI SDK. Groq and Google AI Studio both accept the OpenAI request format, so one
+SDK pointed at a different base URL covers both. Before calling the provider, the client checks
+its response cache (see core/cache.py) and saves new replies there. Rate limits and the usage
+log plug in here later too.
+
+The file also lists a provider's models and turns provider errors into short hints.
+Other modules import it; the file isn't run directly.
 """
 
 import time
 from collections.abc import Sequence
-from typing import Literal, TypedDict
+from typing import Literal, Protocol, TypedDict
 
 import httpx2
 import openai
@@ -34,6 +39,31 @@ class ChatMessage(TypedDict):
     content: str
 
 
+class LLMRequest(BaseModel):
+    """Everything that decides a model's answer. The cache uses it as the lookup key.
+
+    The profile name isn't part of it, so renaming a profile keeps its cached replies.
+
+    Attributes:
+        provider (str): Provider name, such as "groq".
+        model (str): Model ID as the provider spells it.
+        messages (list[ChatMessage]): The conversation, oldest first.
+        temperature (float): Sampling randomness.
+        max_tokens (int): Longest reply allowed, in tokens.
+        sample (int): Which answer to this exact request. 0 is the normal one. 1, 2, ... ask the
+            provider again and are cached separately.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    provider: str
+    model: str
+    messages: list[ChatMessage]
+    temperature: float
+    max_tokens: int
+    sample: int = 0
+
+
 class LLMResponse(BaseModel):
     """A model's reply, plus what the call cost and how long it took.
 
@@ -47,6 +77,8 @@ class LLMResponse(BaseModel):
         input_tokens (int): Tokens in the prompt.
         output_tokens (int): Tokens in the reply.
         latency_s (float): Seconds from sending the request to receiving the reply.
+        cached (bool): True if the reply came from the cache. Tokens and timing are then those
+            of the original call, and no request was sent this time.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -59,6 +91,35 @@ class LLMResponse(BaseModel):
     input_tokens: int
     output_tokens: int
     latency_s: float
+    cached: bool = False
+
+
+class ResponseCache(Protocol):
+    """Anything that can save replies and look them up by request.
+
+    LLMClient only needs these two methods, so real runs pass the PostgreSQL cache
+    (core/cache.py) and tests pass a simple in-memory one.
+    """
+
+    def get(self, request: LLMRequest) -> LLMResponse | None:
+        """Look up the saved reply to a request.
+
+        Args:
+            request (LLMRequest): The request to look up.
+
+        Returns:
+            LLMResponse | None: The saved reply, or None if there isn't one.
+        """
+        ...
+
+    def put(self, request: LLMRequest, response: LLMResponse) -> None:
+        """Save the reply to a request.
+
+        Args:
+            request (LLMRequest): The request that was sent.
+            response (LLMResponse): The provider's reply.
+        """
+        ...
 
 
 class LLMError(Exception):
@@ -109,12 +170,12 @@ def _to_sdk_message(message: ChatMessage) -> ChatCompletionMessageParam:
 
 
 class LLMClient:
-    """Sends chat requests to one model profile.
+    """Sends chat requests to one model profile, answering from the cache when it can.
 
     A client is tied to one model, so a run that uses one client can't mix models.
 
     Attributes:
-        name (str): Profile name, such as "gemini-2.5-flash".
+        name (str): Profile name, such as "groq-gpt-oss-120b".
         profile (ModelProfile): The model and its sampling settings.
         provider_name (str): Name of the provider, such as "google".
     """
@@ -124,6 +185,7 @@ class LLMClient:
         name: str,
         config: ModelsConfig,
         *,
+        cache: ResponseCache | None = None,
         api_key: str | None = None,
         http_client: httpx2.Client | None = None,
     ) -> None:
@@ -132,6 +194,8 @@ class LLMClient:
         Args:
             name (str): Profile name from configs/models.yaml.
             config (ModelsConfig): The loaded model config.
+            cache (ResponseCache | None): Where to look up and save replies. None turns
+                caching off, so every call goes to the provider.
             api_key (str | None): Key to use. None reads it from the provider's environment
                 variable.
             http_client (httpx2.Client | None): HTTP client for the SDK. Tests pass one with a
@@ -143,28 +207,64 @@ class LLMClient:
         self.name = name
         self.profile = config.profile(name)
         self.provider_name = self.profile.provider
+        self._cache = cache
         self._sdk = _make_sdk(config.provider(self.provider_name), api_key, http_client)
 
-    def complete(self, messages: Sequence[ChatMessage]) -> LLMResponse:
-        """Send a conversation to the model and return its reply.
+    def complete(self, messages: Sequence[ChatMessage], *, sample: int = 0) -> LLMResponse:
+        """Get the model's reply to a conversation, from the cache if it was asked before.
 
         Args:
             messages (Sequence[ChatMessage]): The conversation so far, oldest first.
+            sample (int): Which answer to this exact request. Keep 0 normally. Pass 1, 2, ...
+                to ask the provider again, for example when a cached reply was unusable.
+                Each sample is cached separately. At temperature 0 a new sample is often
+                the same text, because the model has little randomness to draw on.
 
         Returns:
-            LLMResponse: The reply text, token counts and timing.
+            LLMResponse: The reply text, token counts, timing and whether it came from the cache.
 
         Raises:
             openai.APIError: If the provider rejects the request or can't be reached.
                 openai.RateLimitError is the one to watch on free tiers.
             LLMError: If the provider answers without any reply.
         """
-        started = time.perf_counter()
-        completion = self._sdk.chat.completions.create(
+        request = LLMRequest(
+            provider=self.provider_name,
             model=self.profile.model,
-            messages=[_to_sdk_message(message) for message in messages],
+            messages=list(messages),
             temperature=self.profile.temperature,
             max_tokens=self.profile.max_tokens,
+            sample=sample,
+        )
+        if self._cache is not None:
+            saved = self._cache.get(request)
+            if saved is not None:
+                return saved.model_copy(update={"cached": True, "profile": self.name})
+        response = self._send(request)
+        # An empty reply is usually a glitch, so we don't keep it: the next call asks again.
+        if self._cache is not None and response.text:
+            self._cache.put(request, response)
+        return response
+
+    def _send(self, request: LLMRequest) -> LLMResponse:
+        """Send a request to the provider and read its reply.
+
+        Args:
+            request (LLMRequest): The model, messages and settings to send.
+
+        Returns:
+            LLMResponse: The provider's reply, with cached set to False.
+
+        Raises:
+            openai.APIError: If the provider rejects the request or can't be reached.
+            LLMError: If the provider answers without any reply.
+        """
+        started = time.perf_counter()
+        completion = self._sdk.chat.completions.create(
+            model=request.model,
+            messages=[_to_sdk_message(message) for message in request.messages],
+            temperature=request.temperature,
+            max_tokens=request.max_tokens,
         )
         latency_s = time.perf_counter() - started
         if not completion.choices:
@@ -174,7 +274,7 @@ class LLMClient:
         return LLMResponse(
             profile=self.name,
             provider=self.provider_name,
-            model=completion.model or self.profile.model,
+            model=completion.model or request.model,
             text=choice.message.content or "",
             finish_reason=choice.finish_reason or "unknown",
             input_tokens=usage.prompt_tokens if usage else 0,

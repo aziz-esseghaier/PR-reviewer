@@ -1,4 +1,18 @@
-"""Command-line entry point for the PR reviewer."""
+"""Command-line interface of the PR reviewer: the `pr-reviewer` command.
+
+Parses the command line and runs the matching command. Setup, database and provider errors
+are shown as a short hint with exit code 1, not as a traceback.
+
+How to run (inside the conda env, from the project folder):
+    pr-reviewer --help                        list the commands
+    pr-reviewer db migrate                    create or update the database tables
+    pr-reviewer db status                     show the database and its migrations
+    pr-reviewer llm models                    list the model profiles
+    pr-reviewer llm available <provider>      list the models your key can use at a provider
+    pr-reviewer llm ping <profile>            send a test prompt (answered from the cache if seen)
+    pr-reviewer cache stats                   show how many replies the cache holds
+`python -m pr_reviewer.cli ...` works the same way.
+"""
 
 import argparse
 import os
@@ -10,8 +24,16 @@ import openai
 import psycopg
 
 from pr_reviewer import __version__
-from pr_reviewer.core.config import ConfigError, load_env, load_models_config
-from pr_reviewer.core.llm import LLMClient, LLMError, explain_api_error, list_provider_models
+from pr_reviewer.core.cache import PostgresCache, cache_stats
+from pr_reviewer.core.config import ConfigError, load_env, load_models_config, read_api_key
+from pr_reviewer.core.llm import (
+    ChatMessage,
+    LLMClient,
+    LLMError,
+    LLMResponse,
+    explain_api_error,
+    list_provider_models,
+)
 from pr_reviewer.db.connection import connect, extension_version, server_version
 from pr_reviewer.db.migrate import applied_migrations, discover_migrations, migrate
 
@@ -56,10 +78,12 @@ def _db_status(args: argparse.Namespace) -> int:
     print(f"PostgreSQL: {postgres}")
     print(f"pgvector:   {pgvector or 'not installed (run: pr-reviewer db migrate)'}")
     print("Migrations:")
-    for migration in discover_migrations():
+    migrations = discover_migrations()
+    width = max((len(f"{m.version}_{m.name}") for m in migrations), default=0)
+    for migration in migrations:
         applied_at = applied.get(migration.version)
         state = f"applied {applied_at:%Y-%m-%d %H:%M}" if applied_at else "pending"
-        print(f"  {migration.version}_{migration.name}  {state}")
+        print(f"  {f'{migration.version}_{migration.name}':<{width}}  {state}")
     return 0
 
 
@@ -98,21 +122,79 @@ def _llm_available(args: argparse.Namespace) -> int:
     return 0
 
 
-def _llm_ping(args: argparse.Namespace) -> int:
-    """Send one short prompt to a model profile and print the reply, tokens and timing.
+def _print_reply(response: LLMResponse, cache_used: bool) -> None:
+    """Print a model reply with its tokens, timing and where it came from.
 
     Args:
-        args (argparse.Namespace): Parsed arguments. Uses `config`, `profile` and `prompt`.
+        response (LLMResponse): The reply to print.
+        cache_used (bool): Whether the cache was on for this call.
+    """
+    if not cache_used:
+        source = "off (asked the provider, nothing saved)"
+    elif response.cached:
+        source = "hit (answered from the database, no request sent)"
+    else:
+        source = "miss (asked the provider and saved the reply)"
+    original = " of the original call" if response.cached else ""
+    print(f"Profile: {response.profile} ({response.provider}, {response.model})")
+    print(f"Reply:   {response.text.strip() or '(empty)'}")
+    print(f"Cache:   {source}")
+    print(f"Tokens:  {response.input_tokens} in, {response.output_tokens} out{original}")
+    print(
+        f"Time:    {response.latency_s:.2f} s{original} (finish reason: {response.finish_reason})"
+    )
+
+
+def _llm_ping(args: argparse.Namespace) -> int:
+    """Send one prompt to a model profile and print the reply, using the cache unless told not to.
+
+    Args:
+        args (argparse.Namespace): Parsed arguments. Uses `config`, `profile`, `prompt`,
+            `sample` and `no_cache`.
 
     Returns:
         int: Exit code, 0 on success.
     """
-    client = LLMClient(args.profile, load_models_config(args.config))
-    response = client.complete([{"role": "user", "content": args.prompt}])
-    print(f"Profile: {response.profile} ({response.provider}, {response.model})")
-    print(f"Reply:   {response.text.strip() or '(empty)'}")
-    print(f"Tokens:  {response.input_tokens} in, {response.output_tokens} out")
-    print(f"Time:    {response.latency_s:.2f} s (finish reason: {response.finish_reason})")
+    config = load_models_config(args.config)
+    # Check the profile name and its API key before opening the database, so a typo or a
+    # missing key is reported as such, even when the database is down.
+    profile = config.profile(args.profile)
+    read_api_key(config.provider(profile.provider))
+    messages: list[ChatMessage] = [{"role": "user", "content": args.prompt}]
+    if args.no_cache:
+        response = LLMClient(args.profile, config).complete(messages, sample=args.sample)
+        _print_reply(response, cache_used=False)
+        return 0
+    with connect() as conn:
+        client = LLMClient(args.profile, config, cache=PostgresCache(conn))
+        response = client.complete(messages, sample=args.sample)
+    _print_reply(response, cache_used=True)
+    return 0
+
+
+def _cache_stats(args: argparse.Namespace) -> int:
+    """Print how many replies the cache holds per provider and model.
+
+    Args:
+        args (argparse.Namespace): Parsed arguments (none are used).
+
+    Returns:
+        int: Exit code, 0 on success.
+    """
+    with connect() as conn:
+        stats = cache_stats(conn)
+    if not stats:
+        print("The cache is empty.")
+        return 0
+    print(f"{'PROVIDER':<10} {'MODEL':<36} {'REPLIES':>7} {'SIZE':>9}  NEWEST")
+    for row in stats:
+        size_kb = row.size_bytes / 1024
+        print(
+            f"{row.provider:<10} {row.model:<36} {row.replies:>7} {size_kb:>6.1f} kB  "
+            f"{row.newest:%Y-%m-%d %H:%M}"
+        )
+    total = sum(row.replies for row in stats)
+    print(f"Total: {total} {'reply' if total == 1 else 'replies'}")
     return 0
 
 
@@ -159,7 +241,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ping.add_argument("profile", help="model profile name from the config")
     ping.add_argument("--prompt", default=PING_PROMPT, help="prompt to send instead of the default")
+    ping.add_argument(
+        "--sample",
+        type=int,
+        default=0,
+        help="ask again for a new answer to the same prompt: 1, 2, ... (default: 0)",
+    )
+    ping.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="skip the cache and always ask the provider (works without the database)",
+    )
     ping.set_defaults(handler=_llm_ping)
+
+    cache = commands.add_parser("cache", help="inspect the LLM response cache")
+    cache_commands = cache.add_subparsers(metavar="CACHE_COMMAND", required=True)
+    cache_commands.add_parser(
+        "stats", help="count the cached replies per provider and model"
+    ).set_defaults(handler=_cache_stats)
     return parser
 
 
@@ -186,7 +285,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     except psycopg.OperationalError as exc:
         print(
             f"Can't reach PostgreSQL: {exc}\n"
-            "Is Docker Desktop running? Start the database with: docker compose up -d",
+            "Is Docker Desktop running? Start the database with: docker compose up -d\n"
+            "(`llm ping` also works without the database: add --no-cache)",
             file=sys.stderr,
         )
     except openai.APIError as exc:

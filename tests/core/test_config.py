@@ -1,4 +1,12 @@
-"""Tests for loading and checking the model config."""
+"""Tests for the settings code in core/config.py.
+
+Checks that configs/models.yaml loads with the right defaults, that typos, unknown providers
+and broken YAML give clear errors that don't repeat the bad values, that the config is found
+from subfolders, and that API keys are read from the environment. Uses temporary files only.
+
+How to run (from the project folder):
+    pytest tests/core/test_config.py
+"""
 
 from pathlib import Path
 
