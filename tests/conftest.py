@@ -4,19 +4,43 @@
 project's Postgres container, and drops it afterwards, so tests never touch real data. Tests
 that use it are skipped when Postgres isn't running.
 
+LangSmith tracing is off for every test, even when .env turns it on, so tests never upload
+anything. `traces` turns it on for one test and catches the traces in memory.
+
 pytest loads this file on its own when you run the tests (`pytest`); it isn't run directly.
 """
 
 import os
 from collections.abc import Iterator
 
+import langsmith
 import psycopg
 import pytest
+from langsmith.run_helpers import tracing_context
 from psycopg import sql
 from psycopg.rows import TupleRow
 
 from pr_reviewer.core.config import ConfigError, load_env
 from pr_reviewer.db.connection import database_url
+from tests.fakes import FakeLangSmith
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _no_tracing() -> None:
+    """Turn LangSmith tracing off for the whole test run, whatever .env says."""
+    langsmith.configure(enabled=False)
+
+
+@pytest.fixture
+def traces() -> Iterator[FakeLangSmith]:
+    """Turn tracing on for one test, catching the traces in memory instead of uploading them.
+
+    Yields:
+        FakeLangSmith: The traced steps, filled in as the test runs.
+    """
+    fake = FakeLangSmith()
+    with tracing_context(enabled=True, client=fake):
+        yield fake
 
 
 def _drop_database(admin: psycopg.Connection[TupleRow], name: str) -> None:

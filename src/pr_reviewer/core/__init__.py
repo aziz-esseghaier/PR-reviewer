@@ -5,6 +5,7 @@
 - cache.py: the PostgreSQL cache of model replies.
 - limits.py: retries, the per-minute throttle and the daily-limit math.
 - usage.py: the PostgreSQL log of every request, used for daily limits and reports.
+- tracing.py: LangSmith tracing of model calls, and the tracing checks run at start and end.
 - schemas.py: shared data shapes: findings with their evidence, environment recipes, and the
   review text SWR-Bench scores.
 

@@ -2,7 +2,8 @@
 
 Parses the command line and runs the matching command. Setup, database and provider errors
 are shown as a short hint with exit code 1, not as a traceback. Waits for rate limits and
-retries are reported as they happen, on stderr.
+retries are reported as they happen, on stderr. With LangSmith tracing on, a command waits
+for its traces to upload before it exits.
 
 How to run (inside the conda env, from the project folder):
     pr-reviewer --help                        list the commands
@@ -47,6 +48,7 @@ from pr_reviewer.core.llm import (
     list_provider_models,
 )
 from pr_reviewer.core.schemas import CATEGORY_NAMES
+from pr_reviewer.core.tracing import describe_tracing, flush_traces, start_tracing
 from pr_reviewer.core.usage import PostgresUsageLog, usage_by_day
 from pr_reviewer.db.checkpoints import open_checkpointer, setup_checkpoints
 from pr_reviewer.db.connection import connect, extension_version, server_version, table_exists
@@ -337,6 +339,7 @@ def _demo(args: argparse.Namespace) -> int:
     read_api_key(config.provider(profile.provider))
     thread_id = args.thread or new_thread_id(args.profile)
     print(f"Demo graph with {args.profile}, thread {thread_id}")
+    print(f"Tracing: {describe_tracing()}")
     with connect() as conn, open_checkpointer(STATE_TYPES) as checkpointer:
         client = LLMClient(
             args.profile, config, cache=PostgresCache(conn), usage=PostgresUsageLog(conn)
@@ -453,6 +456,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     load_env()
     _show_progress_messages()
+    start_tracing()
     try:
         return handler(args)
     except ConfigError as exc:
@@ -470,6 +474,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Stopped: {exc}", file=sys.stderr)
     except LLMError as exc:
         print(f"Unusable model reply: {exc}", file=sys.stderr)
+    finally:
+        flush_traces()
     return 1
 
 

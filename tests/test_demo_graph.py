@@ -2,8 +2,9 @@
 
 Runs the graph with a scripted fake model, so no real provider is called. Checks the normal
 path, the retry loop on bad JSON, giving up, a refuted claim, resuming a stopped run without
-asking the finished steps again, refusing to switch models on a thread, and a second run on a
-new thread answered from the cache. Most tests keep checkpoints in memory; the ones marked
+asking the finished steps again, refusing to switch models on a thread, a second run on a new
+thread answered from the cache, and the run's LangSmith trace (caught in memory, never
+uploaded). Most tests keep checkpoints in memory; the ones marked
 `integration` use PostgreSQL in a throwaway database and are skipped when it isn't running.
 
 How to run (from the project folder):
@@ -32,7 +33,7 @@ from pr_reviewer.demo_graph import (
     parse_json_reply,
     run_demo,
 )
-from tests.fakes import MemoryCache, ScriptedProvider, fake_client
+from tests.fakes import FakeLangSmith, MemoryCache, ScriptedProvider, fake_client, metadata_of
 
 CLAIM_JSON = json.dumps(
     {
@@ -176,6 +177,23 @@ def test_new_thread_is_answered_from_the_cache() -> None:
     assert offline.requests == []
     assert second.review == first.review
     assert all("from cache" in line for line in second.log[:2])
+
+
+def test_run_is_traced_with_model_calls_inside_their_nodes(traces: FakeLangSmith) -> None:
+    """Check the LangSmith trace of a run: the graph, its nodes, each model call in its node."""
+    run(ScriptedProvider([CLAIM_JSON, UPHELD]), thread="traced")
+    root = traces.named("demo")
+    assert root.get("parent_run_id") is None
+    assert "fake-small" in root["tags"]
+    assert metadata_of(root)["thread_id"] == "traced"
+    nodes = {name: traces.named(name) for name in ("find_problem", "verify", "report")}
+    assert all(node["parent_run_id"] == root["id"] for node in nodes.values())
+    calls = traces.steps("llm")
+    assert [call["parent_run_id"] for call in calls] == [
+        nodes["find_problem"]["id"],
+        nodes["verify"]["id"],
+    ]
+    assert calls[1]["inputs"]["messages"][0]["content"] == VERIFY_PROMPT
 
 
 @pytest.mark.parametrize(

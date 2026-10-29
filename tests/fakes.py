@@ -1,5 +1,5 @@
-"""Test doubles shared by the test files: fake LLM providers, a fake clock, and in-memory
-versions of the response cache and the usage log.
+"""Test doubles shared by the test files: fake LLM providers, a fake clock, in-memory versions
+of the response cache and the usage log, and a LangSmith client that keeps traces in memory.
 
 The fake providers answer OpenAI-style requests without touching the network, so tests use no
 API quota and need no keys. FakeProvider gives one reply and can fail a set number of times
@@ -7,7 +7,8 @@ first, to test retries. ScriptedProvider plays a list of different replies and e
 request, to test multi-step graphs.
 The fake clock only moves when something sleeps on it, so tests of waits and retries take no
 real time. The in-memory cache and usage log stand in for their PostgreSQL versions in tests
-that don't need a database. Test files import from here; the file isn't run directly.
+that don't need a database. FakeLangSmith catches the traced steps so tests can check them
+without uploading anything. Test files import from here; the file isn't run directly.
 """
 
 import json
@@ -16,6 +17,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx2
+import langsmith
 
 from pr_reviewer.core.cache import request_key
 from pr_reviewer.core.config import ModelLimits, ModelProfile, ModelsConfig, ProviderConfig
@@ -303,6 +305,90 @@ class MemoryCache:
             response (LLMResponse): The provider's reply.
         """
         self.entries[request_key(request)] = response
+
+
+class FakeLangSmith(langsmith.Client):
+    """A LangSmith client that keeps traced steps in memory instead of uploading them.
+
+    LangSmith sends each step twice: when it starts and when it ends. Both methods that send
+    are replaced here, so nothing reaches the network.
+
+    Attributes:
+        caught (dict[str, dict[str, Any]]): Every traced step by its ID, oldest first: what
+            was sent at the start, updated with what was sent at the end. (The real client
+            already uses the name `runs`.)
+    """
+
+    def __init__(self) -> None:
+        """Create the client. Its address is never contacted."""
+        super().__init__(
+            api_key="fake-langsmith-key", api_url="http://127.0.0.1:9", auto_batch_tracing=False
+        )
+        self.caught: dict[str, dict[str, Any]] = {}
+
+    def create_run(self, name: str, inputs: dict[str, Any], run_type: Any, **kwargs: Any) -> None:
+        """Keep a step that just started.
+
+        Args:
+            name (str): The step's name.
+            inputs (dict[str, Any]): Its inputs.
+            run_type (Any): Its type, such as "chain" or "llm".
+            **kwargs (Any): Everything else LangSmith sends, such as id and parent_run_id.
+        """
+        self.caught[str(kwargs["id"])] = {
+            **kwargs,
+            "name": name,
+            "inputs": inputs,
+            "run_type": run_type,
+        }
+
+    def update_run(self, run_id: Any, **kwargs: Any) -> None:
+        """Add what LangSmith sends when a step ends, such as its outputs or error.
+
+        Args:
+            run_id (Any): The step's ID.
+            **kwargs (Any): The fields sent. Those sent as None are left out.
+        """
+        sent = {key: value for key, value in kwargs.items() if value is not None}
+        self.caught.setdefault(str(run_id), {}).update(sent)
+
+    def steps(self, run_type: str | None = None) -> list[dict[str, Any]]:
+        """List the traced steps, oldest first.
+
+        Args:
+            run_type (str | None): Only steps of this type, such as "llm". None lists all.
+
+        Returns:
+            list[dict[str, Any]]: The steps.
+        """
+        return [
+            run for run in self.caught.values() if run_type is None or run["run_type"] == run_type
+        ]
+
+    def named(self, name: str) -> dict[str, Any]:
+        """Find the one step with a given name.
+
+        Args:
+            name (str): The step's name, such as "verify".
+
+        Returns:
+            dict[str, Any]: The step.
+        """
+        (run,) = [run for run in self.caught.values() if run["name"] == name]
+        return run
+
+
+def metadata_of(run: dict[str, Any]) -> dict[str, Any]:
+    """Read the metadata of a step caught by FakeLangSmith.
+
+    Args:
+        run (dict[str, Any]): The step.
+
+    Returns:
+        dict[str, Any]: Its metadata.
+    """
+    metadata: dict[str, Any] = run["extra"]["metadata"]
+    return metadata
 
 
 class MemoryUsageLog:

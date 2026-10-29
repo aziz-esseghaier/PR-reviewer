@@ -84,6 +84,16 @@ pr-reviewer demo <profile> --thread <id>    # resume a stopped run, or show a fi
 
 A second run on a new thread asks the same questions, so the cache answers all of them.
 
+## Tracing (LangSmith)
+
+LangSmith (smith.langchain.com) shows each run as a timeline: the graph's steps, and inside each step its model calls with the prompt, reply, tokens and time. Tracing is off until you turn it on:
+
+1. Sign up for free at smith.langchain.com and create an API key (Settings > API Keys).
+2. In `.env`, set `LANGSMITH_API_KEY` and `LANGSMITH_TRACING=true`. `LANGSMITH_PROJECT` names the project the traces go to.
+3. Run `pr-reviewer demo <profile>`. It prints `Tracing: on (LangSmith project ...)`. Then open that project on the website.
+
+A reply from the cache shows as a step marked `cached` with no tokens. A failed call shows its error. API keys are never sent. The free plan holds 5,000 traces a month, kept for 14 days, and one graph run is one trace. Tests never send traces.
+
 ## Checks
 
 ```

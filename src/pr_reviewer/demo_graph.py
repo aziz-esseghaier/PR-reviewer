@@ -9,7 +9,8 @@ It uses the LangGraph pieces the real reviewer will need:
 - a checkpointer, so a run that stops (daily limit, crash, Ctrl+C) resumes where it stopped.
 
 Every model call goes through LLMClient, so the cache, retries, limits and usage log all apply.
-A run uses one model profile from start to end.
+A run uses one model profile from start to end. With tracing on, each run shows in LangSmith as
+"demo", tagged with its profile, with the model calls inside the nodes that made them.
 
 How to run (from the project folder, with the database up and migrated):
     pr-reviewer demo <profile>                  start a new run
@@ -395,7 +396,14 @@ def run_demo(
     """
     show = on_step or (lambda line: None)
     graph = build_demo_graph(client, checkpointer)
-    config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+    config: RunnableConfig = {
+        "configurable": {"thread_id": thread_id},
+        # How the run is labeled in LangSmith. LangGraph adds the thread_id to the metadata
+        # itself, so both parts of a resumed run can be found together.
+        "run_name": "demo",
+        "tags": [client.name],
+        "metadata": {"profile": client.name},
+    }
     saved = graph.get_state(config)
     start: DemoState | None
     if saved.values:

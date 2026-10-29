@@ -11,7 +11,8 @@ For each request the client:
 3. waits, if needed, to stay under the model's per-minute limits (core/limits.py);
 4. sends it, retrying after rate limits, overload and timeouts (core/limits.py);
 5. records every try in the usage log, and saves the reply in the cache.
-Cache hits are recorded in the usage log too, but never count against a limit.
+Cache hits are recorded in the usage log too, but never count against a limit. When tracing is
+on, each call, cached or not, is also a step in LangSmith (core/tracing.py).
 
 The file also lists a provider's models and turns provider errors into short hints.
 Other modules import it; the file isn't run directly.
@@ -48,6 +49,7 @@ from pr_reviewer.core.limits import (
     describe_wait,
     estimate_tokens,
 )
+from pr_reviewer.core.tracing import trace_model_call
 from pr_reviewer.core.usage import Outcome, UsageEntry, UsageLog, outcome_of
 
 log = logging.getLogger(__name__)
@@ -287,6 +289,20 @@ class LLMClient:
             max_tokens=self.profile.max_tokens,
             sample=sample,
         )
+        with trace_model_call(self.name, request) as trace:
+            response = self._answer(request)
+            trace.record(response)
+        return response
+
+    def _answer(self, request: LLMRequest) -> LLMResponse:
+        """Answer a request from the cache, or send it and save the reply in the cache.
+
+        Args:
+            request (LLMRequest): The request to answer.
+
+        Returns:
+            LLMResponse: The reply.
+        """
         if self._cache is not None:
             saved = self._cache.get(request)
             if saved is not None:
