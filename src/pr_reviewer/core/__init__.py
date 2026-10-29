@@ -5,7 +5,8 @@
 - cache.py: the PostgreSQL cache of model replies.
 - limits.py: retries, the per-minute throttle and the daily-limit math.
 - usage.py: the PostgreSQL log of every request, used for daily limits and reports.
+- schemas.py: shared data shapes: findings with their evidence, environment recipes, and the
+  review text SWR-Bench scores.
 
-Shared schemas (Finding, Evidence, EnvRecipe) will be added here.
 Imported by other modules; nothing here is run directly.
 """
