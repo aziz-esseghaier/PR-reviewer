@@ -19,11 +19,21 @@ When `pyproject.toml` gets new dependencies, run `pip install -e ".[dev]"` again
 PostgreSQL (with pgvector) runs in Docker. Set a real `POSTGRES_PASSWORD` in `.env` before the first start, because Postgres only reads it when it creates the data volume.
 
 ```
-docker compose up -d          # start the database
+docker compose up -d          # start the database and pgAdmin
 pr-reviewer db migrate        # create or update the tables
 pr-reviewer db status         # show the server, pgvector and applied migrations
-docker compose down           # stop it (the data stays in the pgdata volume)
+docker compose down           # stop them (the data stays in the Docker volumes)
 ```
+
+### Browse the tables (pgAdmin)
+
+pgAdmin is a web tool for browsing the database, and it starts with it. Set `PGADMIN_EMAIL` and `PGADMIN_PASSWORD` in `.env` before its first start, because it only reads them then.
+
+1. Open http://127.0.0.1:5050 and log in with those two values.
+2. In the left panel, open Servers > pr-reviewer and enter your `POSTGRES_PASSWORD` (tick "Save password").
+3. The tables are under Databases > (your `POSTGRES_DB`) > Schemas > public > Tables. Right-click one > View/Edit Data > All Rows.
+
+The first start can take about 10 minutes while pgAdmin sets itself up. Later starts take under a minute. The page works once `docker compose ps` shows pgadmin as "healthy".
 
 ## Models
 
