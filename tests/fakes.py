@@ -1,13 +1,15 @@
-"""Test doubles shared by the test files: a fake LLM provider, a fake clock and an in-memory cache.
+"""Test doubles shared by the test files: a fake LLM provider, a fake clock, and in-memory
+versions of the response cache and the usage log.
 
 The fake provider answers OpenAI-style requests without touching the network, so tests use no
 API quota and need no keys. It can also fail a set number of times first, to test retries.
 The fake clock only moves when something sleeps on it, so tests of waits and retries take no
-real time. The in-memory cache stands in for the PostgreSQL cache in tests that don't need a
-database. Test files import from here; the file isn't run directly.
+real time. The in-memory cache and usage log stand in for their PostgreSQL versions in tests
+that don't need a database. Test files import from here; the file isn't run directly.
 """
 
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx2
@@ -16,6 +18,7 @@ from pr_reviewer.core.cache import request_key
 from pr_reviewer.core.config import ModelLimits, ModelProfile, ModelsConfig, ProviderConfig
 from pr_reviewer.core.limits import Clock
 from pr_reviewer.core.llm import LLMClient, LLMRequest, LLMResponse, ResponseCache
+from pr_reviewer.core.usage import UsageEntry, UsageLog
 
 Handler = Callable[[httpx2.Request], httpx2.Response]
 
@@ -44,13 +47,19 @@ class FakeClock:
     """A clock that stands still until something sleeps on it, so waits take no real time.
 
     Attributes:
-        time (float): The current fake time in seconds.
+        time (float): Seconds since the clock started.
+        start (datetime): The date and time the clock started at.
         sleeps (list[float]): Every wait asked for, in order.
     """
 
-    def __init__(self) -> None:
-        """Start the clock at 0."""
+    def __init__(self, start: datetime = datetime(2026, 10, 29, 12, 0, tzinfo=UTC)) -> None:
+        """Start the clock.
+
+        Args:
+            start (datetime): The date and time to start at.
+        """
         self.time = 0.0
+        self.start = start
         self.sleeps: list[float] = []
 
     def now(self) -> float:
@@ -60,6 +69,14 @@ class FakeClock:
             float: Seconds since the clock started.
         """
         return self.time
+
+    def wall_time(self) -> datetime:
+        """Return the fake date and time.
+
+        Returns:
+            datetime: The start time plus the seconds slept so far.
+        """
+        return self.start + timedelta(seconds=self.time)
 
     def sleep(self, seconds: float) -> None:
         """Record a wait and move the clock forward by it, at once.
@@ -142,11 +159,39 @@ class FakeProvider:
         return httpx2.Response(200, json=completion_body(self.reply, self.finish_reason))
 
 
+def config_with(limits: ModelLimits, daily_reset: str | None = None) -> ModelsConfig:
+    """Build a config with one fake provider and one profile, "fake-custom", with given limits.
+
+    Args:
+        limits (ModelLimits): The profile's limits.
+        daily_reset (str | None): The provider's daily reset rule. None means unknown.
+
+    Returns:
+        ModelsConfig: The config.
+    """
+    return ModelsConfig(
+        providers={
+            "fake": ProviderConfig(
+                base_url="https://llm.example.test/v1",
+                api_key_env="FAKE_LLM_KEY",
+                daily_reset=daily_reset,
+            )
+        },
+        models={
+            "fake-custom": ModelProfile(
+                provider="fake", model="fake-model-v1", max_tokens=64, limits=limits
+            )
+        },
+    )
+
+
 def fake_client(
     handler: Handler,
     cache: ResponseCache | None = None,
     clock: Clock | None = None,
     profile: str = "fake-small",
+    usage: UsageLog | None = None,
+    config: ModelsConfig = FAKE_CONFIG,
 ) -> LLMClient:
     """Create a client for a fake profile whose requests go to a handler, not the network.
 
@@ -156,7 +201,10 @@ def fake_client(
         cache (ResponseCache | None): Cache for the client. None turns caching off.
         clock (Clock | None): Clock for waits. None uses a new FakeClock, so no test ever
             really sleeps.
-        profile (str): "fake-small" (no limits) or "fake-limited" (2 requests a minute).
+        profile (str): Profile name. In FAKE_CONFIG: "fake-small" (no limits) or
+            "fake-limited" (2 requests a minute).
+        usage (UsageLog | None): Usage log for the client. None turns logging off.
+        config (ModelsConfig): Config holding the profile, such as one from config_with().
 
     Returns:
         LLMClient: The client.
@@ -164,8 +212,9 @@ def fake_client(
     http = httpx2.Client(transport=httpx2.MockTransport(handler))
     return LLMClient(
         profile,
-        FAKE_CONFIG,
+        config,
         cache=cache,
+        usage=usage,
         clock=clock or FakeClock(),
         api_key="test-key",
         http_client=http,
@@ -202,3 +251,47 @@ class MemoryCache:
             response (LLMResponse): The provider's reply.
         """
         self.entries[request_key(request)] = response
+
+
+class MemoryUsageLog:
+    """A usage log kept in a list, for tests that don't need the database.
+
+    Attributes:
+        entries (list[UsageEntry]): Every entry recorded, oldest first.
+    """
+
+    def __init__(self, entries: Sequence[UsageEntry] = ()) -> None:
+        """Start with some earlier entries, or none.
+
+        Args:
+            entries (Sequence[UsageEntry]): Entries to start with, oldest first.
+        """
+        self.entries = list(entries)
+
+    def record(self, entry: UsageEntry) -> None:
+        """Save one entry.
+
+        Args:
+            entry (UsageEntry): The request or cache hit to save.
+        """
+        self.entries.append(entry)
+
+    def recent(self, provider: str, model: str, since: datetime) -> list[tuple[datetime, int]]:
+        """List a model's requests since a moment, without cache hits.
+
+        Args:
+            provider (str): Provider name.
+            model (str): Model ID.
+            since (datetime): Only requests after this moment count.
+
+        Returns:
+            list[tuple[datetime, int]]: (time, tokens) of each request, oldest first.
+        """
+        return [
+            (entry.time, entry.input_tokens + entry.output_tokens)
+            for entry in self.entries
+            if entry.provider == provider
+            and entry.model == model
+            and entry.outcome != "cache_hit"
+            and entry.time > since
+        ]

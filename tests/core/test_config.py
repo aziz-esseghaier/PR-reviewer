@@ -1,13 +1,15 @@
 """Tests for the settings code in core/config.py.
 
 Checks that configs/models.yaml loads with the right defaults, that typos, unknown providers
-and broken YAML give clear errors that don't repeat the bad values, that the config is found
-from subfolders, and that API keys are read from the environment. Uses temporary files only.
+and broken YAML give clear errors that don't repeat the bad values, that daily reset rules are
+understood, that the config is found from subfolders, and that API keys are read from the
+environment. Uses temporary files only.
 
 How to run (from the project folder):
     pytest tests/core/test_config.py
 """
 
+from datetime import time
 from pathlib import Path
 
 import pytest
@@ -15,9 +17,12 @@ import pytest
 from pr_reviewer.core.config import (
     MODELS_CONFIG,
     ConfigError,
+    FixedReset,
     ProviderConfig,
+    describe_reset,
     find_config,
     load_models_config,
+    parse_daily_reset,
     read_api_key,
 )
 
@@ -73,6 +78,27 @@ def test_limits_are_read_and_checked(tmp_path: Path) -> None:
     )
     with pytest.raises(ConfigError, match="tokens_per_minute"):
         load_models_config(write_config(tmp_path, VALID_CONFIG + limits.replace("8000", "0")))
+
+
+def test_daily_reset_rules_are_understood() -> None:
+    """Check the three ways of writing daily_reset: a time and zone, gradual, or nothing."""
+    rule = parse_daily_reset("00:00 America/Los_Angeles")
+    assert isinstance(rule, FixedReset)
+    assert rule.at == time(0, 0)
+    assert rule.zone.key == "America/Los_Angeles"
+    assert describe_reset(rule) == "resets at 00:00 America/Los_Angeles"
+    assert parse_daily_reset("gradual") == "gradual"
+    assert parse_daily_reset(None) == "rolling"
+
+
+@pytest.mark.parametrize("bad", ["midnight", "25:00 UTC", "00:00 Not/AZone", "00:00"])
+def test_bad_daily_reset_is_rejected(tmp_path: Path, bad: str) -> None:
+    """Check that a daily_reset the code can't understand stops the config from loading."""
+    text = VALID_CONFIG.replace(
+        "api_key_env: FAKE_LLM_KEY", f'api_key_env: FAKE_LLM_KEY\n    daily_reset: "{bad}"'
+    )
+    with pytest.raises(ConfigError, match="daily_reset must be"):
+        load_models_config(write_config(tmp_path, text))
 
 
 def test_unknown_provider_is_rejected(tmp_path: Path) -> None:

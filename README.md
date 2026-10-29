@@ -39,6 +39,17 @@ pr-reviewer llm ping <profile>       # send a short test prompt and show the rep
 
 Each profile in `configs/models.yaml` can set `limits` (`requests_per_minute`, `tokens_per_minute`). Within one run, the client waits before a request that would go over them. When a provider still answers 429 (rate limit), 5xx (overloaded) or doesn't answer in time, the client waits and tries again, up to 6 times. It uses the provider's own wait hint when there is one, and otherwise doubles the wait each time. A bad key or unknown model fails at once. If the provider asks for a wait over 2 minutes (usually a used-up daily quota), the run stops with a message instead of sleeping. Waits and retries are printed as they happen.
 
+## Usage log and daily limits
+
+Every request sent to a provider (each retry included) gets a row in the `llm_usage` table, and so does every reply served from the cache. Before each request, the client checks the model's `requests_per_day` and `tokens_per_day` against this log, counted the way the provider resets its quota (`daily_reset` in `configs/models.yaml`): all at once at a fixed time (Google: midnight Pacific), gradually over 24 hours (Groq), or over the last 24 hours when unknown. A short wait is waited out; a used-up quota stops the run with a message saying when it comes back.
+
+```
+pr-reviewer usage              # quota use now, and requests, failures, tokens and cache hits per day
+pr-reviewer usage --days 30    # a longer history
+```
+
+Requests made outside this tool, for example in the AI Studio playground, aren't in the log.
+
 ## Response cache
 
 Every model reply is saved in PostgreSQL (table `llm_cache`). Asking the exact same thing again (same model, messages and settings) is answered from the database, so re-runs use no API quota and give the same answers. The cache never expires.

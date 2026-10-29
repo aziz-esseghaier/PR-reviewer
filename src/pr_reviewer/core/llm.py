@@ -6,17 +6,21 @@ SDK pointed at a different base URL covers both.
 
 For each request the client:
 1. answers from the response cache if it has seen the request before (core/cache.py);
-2. otherwise waits, if needed, to stay under the model's per-minute limits (core/limits.py);
-3. sends it, retrying after rate limits, overload and timeouts (core/limits.py);
-4. saves the reply in the cache.
-The usage log will plug in here too.
+2. otherwise checks the model's daily limits against the usage log, and stops if the quota is
+   used up (core/limits.py, core/usage.py);
+3. waits, if needed, to stay under the model's per-minute limits (core/limits.py);
+4. sends it, retrying after rate limits, overload and timeouts (core/limits.py);
+5. records every try in the usage log, and saves the reply in the cache.
+Cache hits are recorded in the usage log too, but never count against a limit.
 
 The file also lists a provider's models and turns provider errors into short hints.
 Other modules import it; the file isn't run directly.
 """
 
+import logging
 import time
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Literal, Protocol, TypedDict
 
 import httpx2
@@ -30,15 +34,23 @@ from openai.types.chat import (
 )
 from pydantic import BaseModel, ConfigDict
 
-from pr_reviewer.core.config import ModelsConfig, ProviderConfig, read_api_key
+from pr_reviewer.core.config import ModelsConfig, ProviderConfig, describe_reset, read_api_key
 from pr_reviewer.core.limits import (
+    DAY,
     Clock,
+    DailyStatus,
+    LimitError,
     RetryPolicy,
     SystemClock,
     Throttle,
     call_with_retries,
+    daily_status,
+    describe_wait,
     estimate_tokens,
 )
+from pr_reviewer.core.usage import Outcome, UsageEntry, UsageLog, outcome_of
+
+log = logging.getLogger(__name__)
 
 
 class ChatMessage(TypedDict):
@@ -205,6 +217,7 @@ class LLMClient:
         config: ModelsConfig,
         *,
         cache: ResponseCache | None = None,
+        usage: UsageLog | None = None,
         retry_policy: RetryPolicy | None = None,
         clock: Clock | None = None,
         api_key: str | None = None,
@@ -217,6 +230,8 @@ class LLMClient:
             config (ModelsConfig): The loaded model config.
             cache (ResponseCache | None): Where to look up and save replies. None turns
                 caching off, so every call goes to the provider.
+            usage (UsageLog | None): Where to record requests and check daily limits. None
+                turns both off.
             retry_policy (RetryPolicy | None): How many tries and how long to wait after
                 temporary errors. None uses the defaults.
             clock (Clock | None): Used to wait. Tests pass a fake one. None uses the real clock.
@@ -231,7 +246,9 @@ class LLMClient:
         self.name = name
         self.profile = config.profile(name)
         self.provider_name = self.profile.provider
+        self._reset_rule = config.provider(self.provider_name).reset_rule
         self._cache = cache
+        self._usage = usage
         self._retry_policy = retry_policy or RetryPolicy()
         self._clock = clock or SystemClock()
         self._throttle = Throttle(
@@ -258,8 +275,8 @@ class LLMClient:
         Raises:
             openai.APIError: If the provider rejects the request, or still fails after all
                 retries.
-            LimitError: If waiting won't help: the daily quota looks used up, or the request
-                is bigger than the model's per-minute token budget.
+            LimitError: If waiting won't help: a daily quota is used up, or the request is
+                bigger than a limit could ever allow.
             LLMError: If the provider answers without any reply.
         """
         request = LLMRequest(
@@ -273,6 +290,12 @@ class LLMClient:
         if self._cache is not None:
             saved = self._cache.get(request)
             if saved is not None:
+                self._record(
+                    "cache_hit",
+                    sent_at=self._clock.wall_time(),
+                    input_tokens=saved.input_tokens,
+                    output_tokens=saved.output_tokens,
+                )
                 return saved.model_copy(update={"cached": True, "profile": self.name})
         response = self._send(request)
         # An empty reply is usually a glitch, so we don't keep it: the next call asks again.
@@ -298,27 +321,46 @@ class LLMClient:
         estimate = estimate_tokens(
             [message["content"] for message in request.messages], request.max_tokens
         )
-        throttle_wait_s = 0.0
+        limit_wait_s = 0.0
 
         def one_try() -> tuple[ChatCompletion, float]:
-            """Wait for room under the limits, then send the request once.
+            """Check the daily limits, wait for room per minute, then send the request once.
+
+            Every try is recorded in the usage log, whether it worked or not.
 
             Returns:
                 tuple[ChatCompletion, float]: The SDK's reply and its latency in seconds.
             """
-            nonlocal throttle_wait_s
+            nonlocal limit_wait_s
+            limit_wait_s += self._wait_for_daily_room(estimate)
             slot, waited_s = self._throttle.reserve(estimate)
-            throttle_wait_s += waited_s
+            limit_wait_s += waited_s
+            sent_at = self._clock.wall_time()
             started = time.perf_counter()
-            completion = self._sdk.chat.completions.create(
-                model=request.model,
-                messages=[_to_sdk_message(message) for message in request.messages],
-                temperature=request.temperature,
-                max_tokens=request.max_tokens,
+            try:
+                completion = self._sdk.chat.completions.create(
+                    model=request.model,
+                    messages=[_to_sdk_message(message) for message in request.messages],
+                    temperature=request.temperature,
+                    max_tokens=request.max_tokens,
+                )
+            except openai.APIError as exc:
+                outcome, status = outcome_of(exc)
+                self._record(outcome, sent_at, status, latency_s=time.perf_counter() - started)
+                raise
+            latency_s = time.perf_counter() - started
+            usage = completion.usage
+            if usage is not None:
+                slot.tokens = usage.total_tokens  # replace the estimate
+            self._record(
+                "ok",
+                sent_at,
+                200,
+                input_tokens=usage.prompt_tokens if usage else 0,
+                output_tokens=usage.completion_tokens if usage else 0,
+                latency_s=latency_s,
             )
-            if completion.usage is not None:
-                slot.tokens = completion.usage.total_tokens  # replace the estimate
-            return completion, time.perf_counter() - started
+            return completion, latency_s
 
         result = call_with_retries(
             one_try, label=self.name, policy=self._retry_policy, clock=self._clock
@@ -338,7 +380,98 @@ class LLMClient:
             output_tokens=usage.completion_tokens if usage else 0,
             latency_s=round(latency_s, 3),
             attempts=result.attempts,
-            waited_s=round(result.waited_s + throttle_wait_s, 3),
+            waited_s=round(result.waited_s + limit_wait_s, 3),
+        )
+
+    def _wait_for_daily_room(self, estimate: int) -> float:
+        """Make sure the next request fits under the model's daily limits.
+
+        Reads the model's requests of the last 24 hours from the usage log and applies the
+        provider's reset rule. A short wait (a quota that refills gradually, or a reset due in
+        a moment) is waited out. A long one stops the run with a message saying when the
+        quota comes back.
+
+        Args:
+            estimate (int): Estimated tokens of the request.
+
+        Returns:
+            float: Seconds spent waiting. 0 if there was room.
+
+        Raises:
+            LimitError: If a daily quota is used up for longer than RetryPolicy.max_wait_s,
+                or the request alone is bigger than the daily token limit.
+        """
+        limits = self.profile.limits
+        if self._usage is None or (
+            limits.requests_per_day is None and limits.tokens_per_day is None
+        ):
+            return 0.0
+        if limits.tokens_per_day is not None and estimate > limits.tokens_per_day:
+            raise LimitError(
+                f"{self.name}: this request needs about {estimate} tokens, more than the "
+                f"model's {limits.tokens_per_day} tokens per day."
+            )
+        waited_s = 0.0
+        while True:
+            now = self._clock.wall_time()
+            history = self._usage.recent(self.provider_name, self.profile.model, now - DAY)
+            checks: list[tuple[str, DailyStatus]] = []
+            if limits.requests_per_day is not None:
+                requests = [(when, 1) for when, _ in history]
+                status = daily_status(requests, limits.requests_per_day, self._reset_rule, now, 1)
+                checks.append(("requests", status))
+            if limits.tokens_per_day is not None:
+                status = daily_status(
+                    history, limits.tokens_per_day, self._reset_rule, now, estimate
+                )
+                checks.append(("tokens", status))
+            kind, worst = max(checks, key=lambda check: check[1].wait_s)
+            if worst.wait_s <= 0:
+                return waited_s
+            if worst.wait_s > self._retry_policy.max_wait_s:
+                raise LimitError(
+                    f"{self.name}: daily {kind} limit reached ({worst.used} of {worst.limit} "
+                    f"{kind}; {describe_reset(self._reset_rule)}). "
+                    f"Room again {describe_wait(worst.wait_s, now)}."
+                )
+            log.info("%s: waiting %.1f s for the daily %s limit", self.name, worst.wait_s, kind)
+            self._clock.sleep(worst.wait_s)
+            waited_s += worst.wait_s
+
+    def _record(
+        self,
+        outcome: Outcome,
+        sent_at: datetime,
+        status_code: int | None = None,
+        *,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        latency_s: float | None = None,
+    ) -> None:
+        """Write one entry to the usage log, if there is one.
+
+        Args:
+            outcome (Outcome): What happened: "ok", "cache_hit" or the kind of failure.
+            sent_at (datetime): When the request was sent, or the cache was asked.
+            status_code (int | None): HTTP status, if there was one.
+            input_tokens (int): Prompt tokens.
+            output_tokens (int): Reply tokens.
+            latency_s (float | None): Seconds the request took. None for cache hits.
+        """
+        if self._usage is None:
+            return
+        self._usage.record(
+            UsageEntry(
+                time=sent_at,
+                provider=self.provider_name,
+                model=self.profile.model,
+                profile=self.name,
+                outcome=outcome,
+                status_code=status_code,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                latency_s=None if latency_s is None else round(latency_s, 3),
+            )
         )
 
 

@@ -1,6 +1,6 @@
-"""Retries and throttling, so LLM calls survive free-tier limits instead of crashing.
+"""Retries, throttling and daily limits, so LLM calls survive free-tier limits.
 
-Two parts:
+Three parts:
 - Retries (`call_with_retries`): when a provider answers 429 (rate limit), 5xx (overloaded or
   broken) or doesn't answer in time, wait and try again. The wait is the provider's own hint
   when it gives one (Groq's retry-after header, Google's retryDelay), otherwise it doubles
@@ -8,24 +8,33 @@ Two parts:
   key or an unknown model, fail at once.
 - Throttle (`Throttle`): keeps a model under its requests-per-minute and tokens-per-minute
   limits by waiting before a request that would go over, so most 429s never happen.
+- Daily limits (`daily_status`): from the usage log, works out how much of a daily quota is
+  in use and how long until a request fits, following the provider's reset rule: all at once
+  at a fixed time (Google), gradually over 24 hours (Groq), or the last 24 hours if unknown.
 
-Both take a clock object, so tests can use a fake clock and never really sleep.
+All of them take a clock object, so tests can use a fake clock and never really sleep.
 Imported by core/llm.py; the file isn't run directly.
 """
 
 import json
 import logging
+import math
 import random
 import re
 import time
 from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 import openai
 
+from pr_reviewer.core.config import FixedReset, ResetRule
+
 log = logging.getLogger(__name__)
+
+DAY = timedelta(days=1)
 
 # HTTP codes worth retrying: rate limit, then server errors and overload.
 RETRYABLE_STATUS = {429, 500, 502, 503, 504}
@@ -38,8 +47,8 @@ HIDDEN_PROMPT_TOKENS = 100
 
 
 class LimitError(Exception):
-    """Raised when waiting won't help: the provider wants a very long wait (usually the daily
-    quota is used up), or a request is bigger than the model's whole per-minute token budget."""
+    """Raised when waiting won't help: a daily quota is used up, or a request is bigger than
+    a limit could ever allow."""
 
 
 class Clock(Protocol):
@@ -53,6 +62,14 @@ class Clock(Protocol):
         """
         ...
 
+    def wall_time(self) -> datetime:
+        """Return the current date and time, for daily limits and the usage log.
+
+        Returns:
+            datetime: The current time in UTC.
+        """
+        ...
+
     def sleep(self, seconds: float) -> None:
         """Wait for a number of seconds.
 
@@ -63,7 +80,7 @@ class Clock(Protocol):
 
 
 class SystemClock:
-    """The real clock: monotonic time and time.sleep."""
+    """The real clock: monotonic time, the system date and time, and time.sleep."""
 
     def now(self) -> float:
         """Return the current monotonic time.
@@ -72,6 +89,14 @@ class SystemClock:
             float: Seconds since an arbitrary start point.
         """
         return time.monotonic()
+
+    def wall_time(self) -> datetime:
+        """Return the current date and time.
+
+        Returns:
+            datetime: The current time in UTC.
+        """
+        return datetime.now(UTC)
 
     def sleep(self, seconds: float) -> None:
         """Wait for a number of seconds.
@@ -91,14 +116,15 @@ class RetryPolicy:
         base_delay_s (float): Wait after the first failure, before randomness.
             It doubles after each further failure.
         max_delay_s (float): Longest wait between two tries, when the provider gives no hint.
-        max_hinted_wait_s (float): Longest wait we accept from the provider's own hint.
-            A longer hint usually means the daily quota is used up, so we stop instead.
+        max_wait_s (float): Longest single wait we accept, whether the provider's hint or a
+            daily limit asks for it. A longer one usually means the daily quota is used up,
+            so we stop instead.
     """
 
     max_attempts: int = 6
     base_delay_s: float = 2.0
     max_delay_s: float = 60.0
-    max_hinted_wait_s: float = 120.0
+    max_wait_s: float = 120.0
 
 
 @dataclass(frozen=True)
@@ -215,7 +241,7 @@ def call_with_retries[T](
     Raises:
         openai.APIError: The error itself if it can't be fixed by asking again, or the last
             error once all tries are used up.
-        LimitError: If the provider asks for a wait longer than max_hinted_wait_s.
+        LimitError: If the provider asks for a wait longer than max_wait_s.
     """
     rng = rng or random.Random()
     waited_s = 0.0
@@ -229,7 +255,7 @@ def call_with_retries[T](
                 log.warning("%s: %s, giving up after %d tries", label, _reason(exc), attempt)
                 raise
             hint = hinted_delay(exc)
-            if hint is not None and hint > policy.max_hinted_wait_s:
+            if hint is not None and hint > policy.max_wait_s:
                 raise LimitError(
                     f"{label}: the provider asks us to wait {hint:.0f} s, which usually means "
                     "the daily quota is used up. Try again later."
@@ -366,3 +392,146 @@ class Throttle:
                         delays.append(slot.time + self.WINDOW_S - now)
                         break
         return max(delays)
+
+
+@dataclass(frozen=True)
+class DailyStatus:
+    """Where a model stands against one daily limit.
+
+    Attributes:
+        used (int): Amount counting against the limit right now, under the provider's rule.
+        limit (int): The daily limit.
+        wait_s (float): Seconds until the asked-for amount fits. 0 if it fits now.
+    """
+
+    used: int
+    limit: int
+    wait_s: float
+
+
+def last_reset(rule: FixedReset, now: datetime) -> datetime:
+    """Find the most recent moment a fixed-time quota reset.
+
+    Args:
+        rule (FixedReset): The reset time and time zone.
+        now (datetime): The current time (timezone-aware).
+
+    Returns:
+        datetime: The last reset at or before now, in the rule's time zone.
+    """
+    local_now = now.astimezone(rule.zone)
+    reset = datetime.combine(local_now.date(), rule.at, tzinfo=rule.zone)
+    if reset > local_now:
+        reset = datetime.combine(local_now.date() - timedelta(days=1), rule.at, tzinfo=rule.zone)
+    return reset
+
+
+def next_reset(rule: FixedReset, now: datetime) -> datetime:
+    """Find the next moment a fixed-time quota resets.
+
+    Built from the local date, so a day with a daylight-saving change still resets at the
+    right local time.
+
+    Args:
+        rule (FixedReset): The reset time and time zone.
+        now (datetime): The current time (timezone-aware).
+
+    Returns:
+        datetime: The first reset after now, in the rule's time zone.
+    """
+    previous = last_reset(rule, now)
+    return datetime.combine(previous.date() + timedelta(days=1), rule.at, tzinfo=rule.zone)
+
+
+def daily_status(
+    usage: Sequence[tuple[datetime, int]],
+    limit: int,
+    rule: ResetRule,
+    now: datetime,
+    needed: int = 0,
+) -> DailyStatus:
+    """Work out how much of a daily limit is in use, and how long until more fits.
+
+    Args:
+        usage (Sequence[tuple[datetime, int]]): (time, amount) of each past request, oldest
+            first, covering at least the last 24 hours. The amount is 1 for a request limit,
+            or the request's tokens for a token limit.
+        limit (int): The daily limit.
+        rule (ResetRule): How the provider's quota comes back.
+        now (datetime): The current time (timezone-aware).
+        needed (int): Amount the next request needs. 0 just reports the current use.
+
+    Returns:
+        DailyStatus: The amount in use, the limit, and the seconds until `needed` fits.
+    """
+    if rule == "gradual":
+        return _gradual_status(usage, limit, now, needed)
+    if isinstance(rule, FixedReset):
+        # Everything since the last reset counts; the whole quota comes back at the next one.
+        since = last_reset(rule, now)
+        used = sum(amount for when, amount in usage if when >= since)
+        fits = used + needed <= limit
+        wait_s = 0.0 if fits else (next_reset(rule, now) - now).total_seconds()
+        return DailyStatus(used=used, limit=limit, wait_s=wait_s)
+    # Rolling: everything in the last 24 hours counts; each request frees up 24 hours later.
+    recent = [(when, amount) for when, amount in usage if when > now - DAY]
+    used = sum(amount for _, amount in recent)
+    excess = used + needed - limit
+    wait_s = 0.0
+    if excess > 0:
+        freed = 0
+        for when, amount in recent:
+            freed += amount
+            if freed >= excess:
+                wait_s = (when + DAY - now).total_seconds()
+                break
+    return DailyStatus(used=used, limit=limit, wait_s=wait_s)
+
+
+def _gradual_status(
+    usage: Sequence[tuple[datetime, int]], limit: int, now: datetime, needed: int
+) -> DailyStatus:
+    """Daily status for a quota that refills a little at a time, like a bucket.
+
+    The bucket holds `limit` and refills at limit / 24 h. Each request takes its amount out.
+    Any use older than 24 hours has fully refilled, so we start 24 hours ago with a full
+    bucket and replay the requests since then.
+
+    Args:
+        usage (Sequence[tuple[datetime, int]]): (time, amount) of past requests, oldest first.
+        limit (int): The daily limit, which is also the bucket's size.
+        now (datetime): The current time (timezone-aware).
+        needed (int): Amount the next request needs.
+
+    Returns:
+        DailyStatus: The amount in use, the limit, and the seconds until `needed` fits.
+    """
+    rate_per_s = limit / DAY.total_seconds()
+    start = now - DAY
+    level = float(limit)
+    previous = start
+    for when, amount in usage:
+        if when <= start:
+            continue
+        level = min(limit, level + (when - previous).total_seconds() * rate_per_s) - amount
+        previous = when
+    level = min(limit, level + (now - previous).total_seconds() * rate_per_s)
+    wait_s = 0.0 if level >= needed else (needed - level) / rate_per_s
+    return DailyStatus(used=round(limit - level), limit=limit, wait_s=wait_s)
+
+
+def describe_wait(seconds: float, now: datetime) -> str:
+    """Say when a wait ends, in words.
+
+    Args:
+        seconds (float): Length of the wait.
+        now (datetime): The current time (timezone-aware).
+
+    Returns:
+        str: Such as "in about 2 h 05 min (Thu 09:00 your time)".
+    """
+    minutes = math.ceil(seconds / 60)
+    hours, minutes = divmod(minutes, 60)
+    span = f"{hours} h {minutes:02d} min" if hours else f"{minutes} min"
+    ends = (now + timedelta(seconds=seconds)).astimezone()  # the computer's own time zone
+    return f"in about {span} ({ends:%a %H:%M} your time)"

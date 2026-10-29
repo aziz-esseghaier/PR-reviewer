@@ -18,6 +18,7 @@ dependencies = [
     "httpx2>=2.12",  # HTTP client under the OpenAI SDK (v3+); tests swap in a fake transport
     "pydantic>=2.14",  # validates configs, and later the LLM's JSON output
     "pyyaml>=6.0",  # reads configs/*.yaml
+    "tzdata>=2025.2",  # time-zone data for daily quota resets; Windows has none built in
 ]
 
 [project.optional-dependencies]

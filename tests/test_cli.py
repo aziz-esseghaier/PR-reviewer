@@ -105,3 +105,20 @@ def test_cache_stats_reports_an_empty_cache(
     monkeypatch.setenv("POSTGRES_DB", str(conninfo_to_dict(test_db_url)["dbname"]))
     assert main(["cache", "stats"]) == 0
     assert "The cache is empty." in capsys.readouterr().out
+
+
+@pytest.mark.integration
+def test_usage_report_on_an_empty_log(
+    test_db_url: str,
+    models_config: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Check that `usage` lists each model's quota and says when nothing was sent yet."""
+    with psycopg.connect(test_db_url, autocommit=True) as conn:
+        migrate(conn)
+    monkeypatch.setenv("POSTGRES_DB", str(conninfo_to_dict(test_db_url)["dbname"]))
+    assert main(["usage", "--config", str(models_config)]) == 0
+    out = capsys.readouterr().out
+    assert "fake fake-model-v1" in out
+    assert "No requests yet." in out

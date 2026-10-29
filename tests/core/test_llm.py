@@ -1,22 +1,50 @@
 """Tests for the LLM client in core/llm.py.
 
 Checks what the client sends to a provider, how it reads replies and errors, how it uses the
-response cache, and how it retries and waits for per-minute limits. Every test runs against a
-fake provider and a fake clock, so none uses API quota or keys, and none really waits.
+response cache, how it retries and waits for per-minute limits, how it records every try in
+the usage log, and how it stops or waits at daily limits. Every test runs against a fake
+provider and a fake clock, so none uses API quota or keys, and none really waits.
 
 How to run (from the project folder):
     pytest tests/core/test_llm.py
 """
 
 import json
+from datetime import timedelta
 
 import httpx2
 import openai
 import pytest
 
-from pr_reviewer.core.config import ConfigError
+from pr_reviewer.core.config import ConfigError, ModelLimits
+from pr_reviewer.core.limits import LimitError
 from pr_reviewer.core.llm import ChatMessage, LLMClient, explain_api_error, list_provider_models
-from tests.fakes import FAKE_CONFIG, FakeClock, FakeProvider, MemoryCache, fake_client
+from pr_reviewer.core.usage import UsageEntry
+from tests.fakes import (
+    FAKE_CONFIG,
+    FakeClock,
+    FakeProvider,
+    MemoryCache,
+    MemoryUsageLog,
+    config_with,
+    fake_client,
+)
+
+
+def past_requests(clock: FakeClock, count: int, seconds_ago: float) -> MemoryUsageLog:
+    """Build a usage log holding earlier requests of the fake model.
+
+    Args:
+        clock (FakeClock): The clock the client will use.
+        count (int): How many requests to add.
+        seconds_ago (float): How long before the clock's current time they were sent.
+
+    Returns:
+        MemoryUsageLog: The log.
+    """
+    sent = clock.wall_time() - timedelta(seconds=seconds_ago)
+    entry = UsageEntry(sent, "fake", "fake-model-v1", "fake-custom", "ok", 200, 100, 10, 0.5)
+    return MemoryUsageLog([entry] * count)
 
 
 def test_complete_sends_profile_settings_and_reads_reply() -> None:
@@ -207,3 +235,88 @@ def test_timeout_is_reported_as_no_answer() -> None:
     with pytest.raises(openai.APITimeoutError) as exc_info:
         fake_client(handler).complete([{"role": "user", "content": "Hello"}])
     assert "didn't answer in time" in explain_api_error(exc_info.value)
+
+
+def test_every_try_is_logged() -> None:
+    """Check that a failed try and the successful one each get a usage entry."""
+    usage = MemoryUsageLog()
+    provider = FakeProvider("Hi there.", failures=[503])
+    fake_client(provider, usage=usage).complete([{"role": "user", "content": "Hello"}])
+    assert [(e.outcome, e.status_code) for e in usage.entries] == [
+        ("server_error", 503),
+        ("ok", 200),
+    ]
+    assert (usage.entries[1].input_tokens, usage.entries[1].output_tokens) == (12, 3)
+    assert usage.entries[0].input_tokens == 0
+
+
+def test_cache_hit_is_logged_but_not_counted() -> None:
+    """Check that a cache hit gets its own entry, which the daily count leaves out."""
+    usage = MemoryUsageLog()
+    clock = FakeClock()
+    client = fake_client(FakeProvider(), MemoryCache(), clock=clock, usage=usage)
+    client.complete([{"role": "user", "content": "Hello"}])
+    client.complete([{"role": "user", "content": "Hello"}])
+    assert [e.outcome for e in usage.entries] == ["ok", "cache_hit"]
+    assert len(usage.recent("fake", "fake-model-v1", clock.wall_time() - timedelta(days=1))) == 1
+
+
+def test_used_up_daily_quota_stops_before_sending() -> None:
+    """Check that a model at its daily request limit sends nothing and says when room returns."""
+    clock = FakeClock()
+    provider = FakeProvider()
+    client = fake_client(
+        provider,
+        clock=clock,
+        profile="fake-custom",
+        usage=past_requests(clock, count=2, seconds_ago=3600),
+        config=config_with(ModelLimits(requests_per_day=2)),
+    )
+    with pytest.raises(LimitError, match=r"daily requests limit reached \(2 of 2 requests"):
+        client.complete([{"role": "user", "content": "Hello"}])
+    assert provider.requests == []
+    assert clock.sleeps == []
+
+
+def test_fixed_reset_message_names_the_reset_time() -> None:
+    """Check that the stop message for a fixed-time quota says when it resets."""
+    clock = FakeClock()
+    client = fake_client(
+        FakeProvider(),
+        clock=clock,
+        profile="fake-custom",
+        usage=past_requests(clock, count=1, seconds_ago=60),
+        config=config_with(ModelLimits(requests_per_day=1), "00:00 America/Los_Angeles"),
+    )
+    with pytest.raises(LimitError, match="resets at 00:00 America/Los_Angeles"):
+        client.complete([{"role": "user", "content": "Hello"}])
+
+
+def test_gradual_quota_short_wait_is_waited_out() -> None:
+    """Check that a quota refilling one request a minute waits under a minute, then sends."""
+    clock = FakeClock()
+    provider = FakeProvider()
+    client = fake_client(
+        provider,
+        clock=clock,
+        profile="fake-custom",
+        usage=past_requests(clock, count=1440, seconds_ago=1),  # a full day's quota just now
+        config=config_with(ModelLimits(requests_per_day=1440), "gradual"),
+    )
+    response = client.complete([{"role": "user", "content": "Hello"}])
+    assert len(provider.requests) == 1
+    assert len(clock.sleeps) == 1
+    assert 50 < clock.sleeps[0] <= 60
+    assert response.waited_s == pytest.approx(clock.sleeps[0], abs=0.01)
+
+
+def test_request_bigger_than_daily_tokens_is_refused() -> None:
+    """Check that a request that could never fit in a day's tokens stops at once."""
+    client = fake_client(
+        FakeProvider(),
+        profile="fake-custom",
+        usage=MemoryUsageLog(),
+        config=config_with(ModelLimits(tokens_per_day=100)),
+    )
+    with pytest.raises(LimitError, match="tokens per day"):
+        client.complete([{"role": "user", "content": "Hello"}])

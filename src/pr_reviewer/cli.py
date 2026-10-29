@@ -12,6 +12,7 @@ How to run (inside the conda env, from the project folder):
     pr-reviewer llm available <provider>      list the models your key can use at a provider
     pr-reviewer llm ping <profile>            send a test prompt (answered from the cache if seen)
     pr-reviewer cache stats                   show how many replies the cache holds
+    pr-reviewer usage                         show daily quota use and requests per day
 `python -m pr_reviewer.cli ...` works the same way.
 """
 
@@ -20,6 +21,7 @@ import logging
 import os
 import sys
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 
 import openai
@@ -27,8 +29,14 @@ import psycopg
 
 from pr_reviewer import __version__
 from pr_reviewer.core.cache import PostgresCache, cache_stats
-from pr_reviewer.core.config import ConfigError, load_env, load_models_config, read_api_key
-from pr_reviewer.core.limits import LimitError
+from pr_reviewer.core.config import (
+    ConfigError,
+    describe_reset,
+    load_env,
+    load_models_config,
+    read_api_key,
+)
+from pr_reviewer.core.limits import DAY, LimitError, daily_status
 from pr_reviewer.core.llm import (
     ChatMessage,
     LLMClient,
@@ -37,6 +45,7 @@ from pr_reviewer.core.llm import (
     explain_api_error,
     list_provider_models,
 )
+from pr_reviewer.core.usage import PostgresUsageLog, usage_by_day
 from pr_reviewer.db.connection import connect, extension_version, server_version
 from pr_reviewer.db.migrate import applied_migrations, discover_migrations, migrate
 
@@ -192,11 +201,14 @@ def _llm_ping(args: argparse.Namespace) -> int:
     read_api_key(config.provider(profile.provider))
     messages: list[ChatMessage] = [{"role": "user", "content": args.prompt}]
     if args.no_cache:
+        # No database at all: no cache, no usage log, no daily-limit check.
         response = LLMClient(args.profile, config).complete(messages, sample=args.sample)
         _print_reply(response, cache_used=False)
         return 0
     with connect() as conn:
-        client = LLMClient(args.profile, config, cache=PostgresCache(conn))
+        client = LLMClient(
+            args.profile, config, cache=PostgresCache(conn), usage=PostgresUsageLog(conn)
+        )
         response = client.complete(messages, sample=args.sample)
     _print_reply(response, cache_used=True)
     return 0
@@ -225,6 +237,57 @@ def _cache_stats(args: argparse.Namespace) -> int:
         )
     total = sum(row.replies for row in stats)
     print(f"Total: {total} {'reply' if total == 1 else 'replies'}")
+    return 0
+
+
+def _usage(args: argparse.Namespace) -> int:
+    """Print each model's daily quota use now, then its requests per day.
+
+    Args:
+        args (argparse.Namespace): Parsed arguments. Uses `config` and `days`.
+
+    Returns:
+        int: Exit code, 0 on success.
+    """
+    config = load_models_config(args.config)
+    now = datetime.now(UTC)
+    with connect() as conn:
+        log = PostgresUsageLog(conn)
+        print("Daily quotas now (each provider's own reset rule)")
+        seen: set[tuple[str, str]] = set()
+        for profile in config.models.values():
+            key = (profile.provider, profile.model)
+            if key in seen:
+                continue  # profiles on the same model share its quota
+            seen.add(key)
+            rule = config.provider(profile.provider).reset_rule
+            history = log.recent(profile.provider, profile.model, now - DAY)
+            limits = profile.limits
+            requests = f"{len(history)} in the last 24 h"
+            if limits.requests_per_day is not None:
+                status = daily_status(
+                    [(t, 1) for t, _ in history], limits.requests_per_day, rule, now
+                )
+                requests = f"{status.used} / {limits.requests_per_day}"
+            tokens = f"{sum(tokens for _, tokens in history):,} in the last 24 h"
+            if limits.tokens_per_day is not None:
+                status = daily_status(history, limits.tokens_per_day, rule, now)
+                tokens = f"{status.used:,} / {limits.tokens_per_day:,}"
+            print(f"  {profile.provider} {profile.model}  ({describe_reset(rule)})")
+            print(f"      requests: {requests}    tokens: {tokens}")
+        days = usage_by_day(conn, args.days)
+    print(f"\nBy day, last {args.days} days (UTC)")
+    if not days:
+        print("  No requests yet.")
+        return 0
+    header = f"  {'DAY':<10}  {'MODEL':<34} {'REQUESTS':>8} {'FAILED':>6} {'TOKENS':>9}"
+    print(f"{header} {'CACHE HITS':>10} {'TOKENS SAVED':>12}")
+    for row in days:
+        model = f"{row.provider} {row.model}"
+        print(
+            f"  {row.day:%Y-%m-%d}  {model:<34} {row.requests:>8} {row.failed:>6} "
+            f"{row.tokens:>9,} {row.cache_hits:>10} {row.tokens_saved:>12,}"
+        )
     return 0
 
 
@@ -280,7 +343,7 @@ def build_parser() -> argparse.ArgumentParser:
     ping.add_argument(
         "--no-cache",
         action="store_true",
-        help="skip the cache and always ask the provider (works without the database)",
+        help="skip the database: no cache, no usage log, no daily-limit check",
     )
     ping.set_defaults(handler=_llm_ping)
 
@@ -289,6 +352,12 @@ def build_parser() -> argparse.ArgumentParser:
     cache_commands.add_parser(
         "stats", help="count the cached replies per provider and model"
     ).set_defaults(handler=_cache_stats)
+
+    usage = commands.add_parser(
+        "usage", parents=[config_option], help="show daily quota use and requests per day"
+    )
+    usage.add_argument("--days", type=int, default=7, help="days of history to show (default: 7)")
+    usage.set_defaults(handler=_usage)
     return parser
 
 

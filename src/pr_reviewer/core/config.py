@@ -1,21 +1,33 @@
 """Project settings: the .env file and the model config.
 
 Loads .env into the environment (API keys, database settings), finds and reads
-configs/models.yaml (providers, model profiles and their per-minute limits), and checks it
-with pydantic, so a typo, an unknown provider or a missing key fails at startup with a clear
-message. Error messages never repeat the values you typed, in case a key ended up in the wrong
+configs/models.yaml, and checks it with pydantic, so a typo, an unknown provider or a missing
+key fails at startup with a clear message. The config holds the providers (with the rule for
+when their daily quota resets) and the model profiles (with their per-minute and per-day
+limits). Error messages never repeat the values you typed, in case a key ended up in the wrong
 place. Also reads a provider's API key from the environment.
 
 Imported by other modules; the file isn't run directly.
 """
 
+import datetime as dt
 import os
+import re
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, Literal, Self
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 from dotenv import find_dotenv, load_dotenv
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 # Where the model config lives, relative to the project root.
 MODELS_CONFIG = Path("configs") / "models.yaml"
@@ -60,6 +72,73 @@ def find_config(relative_path: Path) -> Path:
     )
 
 
+@dataclass(frozen=True)
+class FixedReset:
+    """A daily quota that resets all at once at a fixed local time, such as midnight Pacific.
+
+    Attributes:
+        at (dt.time): Local time of the reset.
+        zone (ZoneInfo): Time zone that time is in. Handles daylight saving.
+    """
+
+    at: dt.time
+    zone: ZoneInfo
+
+
+# How a provider's daily quota comes back:
+# - FixedReset: all at once at a set time each day (Google: midnight Pacific).
+# - "gradual": a little at a time, refilling the whole quota over 24 hours (Groq).
+# - "rolling": unknown, so we count the last 24 hours. Safe, but may stop too early.
+ResetRule = FixedReset | Literal["gradual", "rolling"]
+
+DAILY_RESET_HELP = (
+    "daily_reset must be 'gradual' or a time and time zone, such as '00:00 America/Los_Angeles'"
+)
+
+
+def parse_daily_reset(text: str | None) -> ResetRule:
+    """Turn a provider's daily_reset setting into a reset rule.
+
+    Args:
+        text (str | None): "gradual", a time and time zone such as "00:00 America/Los_Angeles",
+            or None when the setting is left out.
+
+    Returns:
+        ResetRule: FixedReset, "gradual", or "rolling" when the setting is left out.
+
+    Raises:
+        ValueError: If the text is neither "gradual" nor a valid time and time zone.
+    """
+    if text is None:
+        return "rolling"
+    if text.strip() == "gradual":
+        return "gradual"
+    match = re.fullmatch(r"(\d{1,2}):(\d{2})\s+(\S+)", text.strip())
+    if match:
+        hour, minute, zone = match.groups()
+        try:
+            return FixedReset(at=dt.time(int(hour), int(minute)), zone=ZoneInfo(zone))
+        except (ValueError, ZoneInfoNotFoundError):
+            pass
+    raise ValueError(DAILY_RESET_HELP)
+
+
+def describe_reset(rule: ResetRule) -> str:
+    """Describe a reset rule in a few words, for messages and reports.
+
+    Args:
+        rule (ResetRule): The rule to describe.
+
+    Returns:
+        str: Such as "resets at 00:00 America/Los_Angeles".
+    """
+    if isinstance(rule, FixedReset):
+        return f"resets at {rule.at:%H:%M} {rule.zone.key}"
+    if rule == "gradual":
+        return "refills gradually over 24 h"
+    return "counted over the last 24 h"
+
+
 class ProviderConfig(BaseModel):
     """Connection settings for one LLM provider.
 
@@ -68,6 +147,9 @@ class ProviderConfig(BaseModel):
         api_key_env (str): Name of the environment variable that holds the API key.
             The key itself never goes in a config file.
         timeout_s (float): Seconds to wait for a reply before giving up.
+        daily_reset (str | None): When the daily quota comes back: "gradual", or a time and
+            time zone such as "00:00 America/Los_Angeles". None means unknown, so the last
+            24 hours are counted.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -75,14 +157,45 @@ class ProviderConfig(BaseModel):
     base_url: str = Field(pattern=r"^https://")
     api_key_env: str = Field(pattern=r"^[A-Z][A-Z0-9_]*$")
     timeout_s: float = Field(default=120.0, gt=0)
+    daily_reset: str | None = None
+
+    @field_validator("daily_reset")
+    @classmethod
+    def _check_daily_reset(cls, value: str | None) -> str | None:
+        """Make sure daily_reset can be understood.
+
+        Args:
+            value (str | None): The setting as written in the config.
+
+        Returns:
+            str | None: The unchanged setting.
+
+        Raises:
+            ValueError: If the setting can't be parsed.
+        """
+        parse_daily_reset(value)
+        return value
+
+    @property
+    def reset_rule(self) -> ResetRule:
+        """The provider's daily reset rule, parsed from daily_reset.
+
+        Returns:
+            ResetRule: FixedReset, "gradual" or "rolling".
+        """
+        return parse_daily_reset(self.daily_reset)
 
 
 class ModelLimits(BaseModel):
-    """A model's free-tier limits per minute. The client waits rather than go over them.
+    """A model's free-tier limits. The client waits, or stops, rather than go over them.
 
     Attributes:
         requests_per_minute (int | None): Most requests in any 60 seconds. None means no limit.
         tokens_per_minute (int | None): Most tokens, prompt plus reply, in any 60 seconds.
+            None means no limit.
+        requests_per_day (int | None): Most requests per day, counted under the provider's
+            daily_reset rule. None means no limit.
+        tokens_per_day (int | None): Most tokens per day, counted the same way.
             None means no limit.
     """
 
@@ -90,6 +203,8 @@ class ModelLimits(BaseModel):
 
     requests_per_minute: int | None = Field(default=None, gt=0)
     tokens_per_minute: int | None = Field(default=None, gt=0)
+    requests_per_day: int | None = Field(default=None, gt=0)
+    tokens_per_day: int | None = Field(default=None, gt=0)
 
 
 class ModelProfile(BaseModel):
@@ -100,7 +215,7 @@ class ModelProfile(BaseModel):
         model (str): Model ID as the provider spells it.
         temperature (float): Sampling randomness. 0 gives the most repeatable answers.
         max_tokens (int): Longest reply the model may write, in tokens.
-        limits (ModelLimits): Per-minute limits to stay under. Empty means no limits.
+        limits (ModelLimits): Per-minute and per-day limits to stay under. Empty means none.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)

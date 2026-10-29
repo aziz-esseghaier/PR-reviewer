@@ -1,8 +1,10 @@
-"""Tests for retries and throttling in core/limits.py.
+"""Tests for retries, throttling and daily limits in core/limits.py.
 
 Checks which errors are retried, how long the waits are (the provider's hint or doubling
-backoff), when the retries give up, and that the throttle keeps requests and tokens under
-their per-minute limits. A fake clock stands in for real time, so nothing actually waits.
+backoff), when the retries give up, that the throttle keeps requests and tokens under their
+per-minute limits, and that daily quotas are counted the way each provider resets them: at a
+fixed time (including across a daylight-saving change), gradually, or over the last 24 hours.
+A fake clock stands in for real time, so nothing actually waits.
 
 How to run (from the project folder):
     pytest tests/core/test_limits.py
@@ -10,22 +12,31 @@ How to run (from the project folder):
 
 import random
 from collections.abc import Callable
+from datetime import UTC, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 import httpx2
 import openai
 import pytest
 
+from pr_reviewer.core.config import FixedReset
 from pr_reviewer.core.limits import (
     LimitError,
     RetryPolicy,
     Throttle,
     backoff_delay,
     call_with_retries,
+    daily_status,
     estimate_tokens,
     hinted_delay,
     is_retryable,
+    last_reset,
+    next_reset,
 )
 from tests.fakes import FakeClock
+
+MIDNIGHT_PACIFIC = FixedReset(at=time(0, 0), zone=ZoneInfo("America/Los_Angeles"))
+HOUR = timedelta(hours=1)
 
 REQUEST = httpx2.Request("POST", "https://llm.example.test/v1/chat/completions")
 
@@ -226,3 +237,54 @@ def test_throttle_refuses_a_request_bigger_than_the_budget() -> None:
     throttle = Throttle(None, 1000, clock=FakeClock(), label="test")
     with pytest.raises(LimitError, match="Shorten the prompt"):
         throttle.reserve(1500)
+
+
+def test_rolling_window_frees_the_oldest_request_after_24_hours() -> None:
+    """Check that with no known reset rule, room comes back 24 h after the oldest request."""
+    now = datetime(2026, 10, 29, 12, 0, tzinfo=UTC)
+    usage = [(now - 23 * HOUR, 1), (now - HOUR, 1)]
+    status = daily_status(usage, limit=2, rule="rolling", now=now, needed=1)
+    assert status.used == 2
+    assert status.wait_s == pytest.approx(HOUR.total_seconds())
+
+
+def test_fixed_reset_counts_only_since_the_last_reset() -> None:
+    """Check that requests before midnight Pacific don't count, and room returns at the next."""
+    now = datetime(2026, 10, 31, 20, 0, tzinfo=UTC)  # 13:00 in Los Angeles (PDT, UTC-7)
+    before_reset = datetime(2026, 10, 31, 6, 0, tzinfo=UTC)  # 23:00 the day before, in LA
+    after_reset = datetime(2026, 10, 31, 8, 0, tzinfo=UTC)
+    status = daily_status(
+        [(before_reset, 1), (after_reset, 1)], limit=1, rule=MIDNIGHT_PACIFIC, now=now, needed=1
+    )
+    assert status.used == 1
+    # The next reset is midnight on 1 November in LA, which is 07:00 UTC.
+    assert status.wait_s == pytest.approx(11 * HOUR.total_seconds())
+
+
+def test_fixed_reset_follows_daylight_saving() -> None:
+    """Check the reset times around the end of daylight saving in LA on 1 November 2026."""
+    now = datetime(2026, 11, 1, 20, 0, tzinfo=UTC)  # 12:00 in LA, after clocks went back
+    assert last_reset(MIDNIGHT_PACIFIC, now) == datetime(2026, 11, 1, 7, 0, tzinfo=UTC)  # PDT
+    assert next_reset(MIDNIGHT_PACIFIC, now) == datetime(2026, 11, 2, 8, 0, tzinfo=UTC)  # PST
+
+
+def test_gradual_quota_refills_bit_by_bit() -> None:
+    """Check that a quota of 24 a day gives one request back every hour after a burst."""
+    now = datetime(2026, 10, 29, 12, 0, tzinfo=UTC)
+    burst = [(now - timedelta(seconds=1), 1)] * 24
+    status = daily_status(burst, limit=24, rule="gradual", now=now, needed=1)
+    assert status.used == 24
+    assert status.wait_s == pytest.approx(HOUR.total_seconds(), abs=2)
+
+    two_hours_later = now + 2 * HOUR
+    status = daily_status(burst, limit=24, rule="gradual", now=two_hours_later, needed=1)
+    assert status.used == 22
+    assert status.wait_s == 0.0
+
+
+def test_gradual_quota_forgets_use_older_than_a_day() -> None:
+    """Check that requests from more than 24 hours ago have fully refilled."""
+    now = datetime(2026, 10, 29, 12, 0, tzinfo=UTC)
+    status = daily_status([(now - 25 * HOUR, 24)], limit=24, rule="gradual", now=now, needed=24)
+    assert status.used == 0
+    assert status.wait_s == 0.0
