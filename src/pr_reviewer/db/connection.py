@@ -7,10 +7,11 @@ whether a table exists. Other modules import these helpers; the file isn't run d
 
 import os
 from collections.abc import Mapping
+from typing import Any
 
 import psycopg
 from psycopg.conninfo import make_conninfo
-from psycopg.rows import TupleRow
+from psycopg.rows import TupleRow, tuple_row
 
 from pr_reviewer.core.config import ConfigError
 
@@ -96,15 +97,17 @@ def extension_version(conn: psycopg.Connection[TupleRow], extension: str) -> str
     return str(row[0]) if row else None
 
 
-def table_exists(conn: psycopg.Connection[TupleRow], table: str) -> bool:
+def table_exists(conn: psycopg.Connection[Any], table: str) -> bool:
     """Check whether a table exists, without changing anything.
 
     Args:
-        conn (psycopg.Connection[TupleRow]): Open database connection.
+        conn (psycopg.Connection[Any]): Open database connection. Its rows can be tuples or
+            dicts (LangGraph's checkpointer uses dicts).
         table (str): Table name, such as "llm_cache".
 
     Returns:
         bool: True if the table exists.
     """
-    row = conn.execute("SELECT to_regclass(%s)", (table,)).fetchone()
+    with conn.cursor(row_factory=tuple_row) as cur:
+        row = cur.execute("SELECT to_regclass(%s)", (table,)).fetchone()
     return row is not None and row[0] is not None

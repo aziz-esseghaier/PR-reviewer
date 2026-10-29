@@ -150,6 +150,15 @@ def test_claim_cleans_up_typical_model_output() -> None:
     assert "severity" not in claim.model_dump()
 
 
+@pytest.mark.parametrize(
+    ("written", "kept"),
+    [("F.2 Logic", "F.2"), ("F.4: Check", "F.4"), ("E.1.1 Documentation: text", "E.1.1")],
+)
+def test_claim_keeps_only_the_category_code(written: str, kept: str) -> None:
+    """Check that a category written with its name, as models often do, keeps just the code."""
+    assert make_claim(category=written).category == kept
+
+
 def test_claim_cannot_carry_evidence() -> None:
     """Check that proof written by the model is thrown away, so the claim stays unproven."""
     fake_proof = executed().model_dump()

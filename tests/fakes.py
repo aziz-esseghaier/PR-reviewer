@@ -1,13 +1,16 @@
-"""Test doubles shared by the test files: a fake LLM provider, a fake clock, and in-memory
+"""Test doubles shared by the test files: fake LLM providers, a fake clock, and in-memory
 versions of the response cache and the usage log.
 
-The fake provider answers OpenAI-style requests without touching the network, so tests use no
-API quota and need no keys. It can also fail a set number of times first, to test retries.
+The fake providers answer OpenAI-style requests without touching the network, so tests use no
+API quota and need no keys. FakeProvider gives one reply and can fail a set number of times
+first, to test retries. ScriptedProvider plays a list of different replies and errors, one per
+request, to test multi-step graphs.
 The fake clock only moves when something sleeps on it, so tests of waits and retries take no
 real time. The in-memory cache and usage log stand in for their PostgreSQL versions in tests
 that don't need a database. Test files import from here; the file isn't run directly.
 """
 
+import json
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -157,6 +160,55 @@ class FakeProvider:
             status = self.failures.pop(0)
             return httpx2.Response(status, json={"error": {"message": f"fake error {status}"}})
         return httpx2.Response(200, json=completion_body(self.reply, self.finish_reason))
+
+
+class ScriptedProvider:
+    """A pretend provider that answers each request with the next step of a script.
+
+    Attributes:
+        requests (list[httpx2.Request]): Every request received, oldest first.
+        script (list[str | int]): Steps still to play, in order. Text is a reply; a number
+            is an HTTP error code to answer with.
+    """
+
+    def __init__(self, script: Sequence[str | int]) -> None:
+        """Set the replies to give.
+
+        Args:
+            script (Sequence[str | int]): One step per expected request, such as
+                ['{"verdict": "upheld"}', 401].
+        """
+        self.requests: list[httpx2.Request] = []
+        self.script = list(script)
+
+    def __call__(self, request: httpx2.Request) -> httpx2.Response:
+        """Record a request and answer it with the next step.
+
+        Args:
+            request (httpx2.Request): The request the SDK sent.
+
+        Returns:
+            httpx2.Response: The next reply or error. With the script used up, a 400 error,
+            which the client doesn't retry, so the test fails clearly.
+        """
+        self.requests.append(request)
+        step = self.script.pop(0) if self.script else 400
+        if isinstance(step, int):
+            return httpx2.Response(step, json={"error": {"message": f"fake error {step}"}})
+        return httpx2.Response(200, json=completion_body(step))
+
+    def messages(self, index: int) -> list[dict[str, str]]:
+        """Read the messages of one received request.
+
+        Args:
+            index (int): Which request, 0 for the first.
+
+        Returns:
+            list[dict[str, str]]: Its messages, each with "role" and "content".
+        """
+        body: dict[str, Any] = json.loads(self.requests[index].content)
+        messages: list[dict[str, str]] = body["messages"]
+        return messages
 
 
 def config_with(limits: ModelLimits, daily_reset: str | None = None) -> ModelsConfig:

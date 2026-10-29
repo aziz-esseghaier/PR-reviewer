@@ -94,6 +94,26 @@ def test_llm_ping_unknown_profile_lists_known_ones(
     assert "fake-small" in capsys.readouterr().err
 
 
+def test_demo_unknown_profile_lists_known_ones(
+    models_config: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Check that `demo` with a typo in the profile exits 1 before touching the database."""
+    assert main(["demo", "fake-smal", "--config", str(models_config)]) == 1
+    assert "fake-small" in capsys.readouterr().err
+
+
+@pytest.mark.integration
+def test_db_migrate_creates_the_checkpoint_tables(
+    test_db_url: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Check that `db migrate` also sets up LangGraph's tables, and `db status` sees them."""
+    monkeypatch.setenv("POSTGRES_DB", str(conninfo_to_dict(test_db_url)["dbname"]))
+    assert main(["db", "migrate"]) == 0
+    assert "checkpoint tables are ready" in capsys.readouterr().out
+    assert main(["db", "status"]) == 0
+    assert "Checkpoints: ready" in capsys.readouterr().out
+
+
 @pytest.mark.integration
 def test_cache_stats_reports_an_empty_cache(
     test_db_url: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]

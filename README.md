@@ -73,6 +73,17 @@ pr-reviewer cache stats                                     # cached replies per
 
 After pulling new code, run `pr-reviewer db migrate` to create any new tables.
 
+## Demo graph (LangGraph)
+
+A small LangGraph graph reviews a built-in function with one model. It asks for one problem as JSON, and asks again (up to 3 times) when the reply doesn't fit the schema. Then it asks the same model to refute the problem, and prints the review text. The graph's progress is saved in PostgreSQL after each step (LangGraph's checkpoint tables, created by `pr-reviewer db migrate`), so a run stopped by a daily limit or an error continues where it stopped.
+
+```
+pr-reviewer demo <profile>                  # a new run (prints its thread ID)
+pr-reviewer demo <profile> --thread <id>    # resume a stopped run, or show a finished one
+```
+
+A second run on a new thread asks the same questions, so the cache answers all of them.
+
 ## Checks
 
 ```

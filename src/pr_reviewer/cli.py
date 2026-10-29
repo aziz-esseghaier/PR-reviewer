@@ -13,6 +13,7 @@ How to run (inside the conda env, from the project folder):
     pr-reviewer llm ping <profile>            send a test prompt (answered from the cache if seen)
     pr-reviewer cache stats                   show how many replies the cache holds
     pr-reviewer usage                         show daily quota use and requests per day
+    pr-reviewer demo <profile>                run the demo LangGraph graph (--thread to resume)
 `python -m pr_reviewer.cli ...` works the same way.
 """
 
@@ -45,9 +46,12 @@ from pr_reviewer.core.llm import (
     explain_api_error,
     list_provider_models,
 )
+from pr_reviewer.core.schemas import CATEGORY_NAMES
 from pr_reviewer.core.usage import PostgresUsageLog, usage_by_day
-from pr_reviewer.db.connection import connect, extension_version, server_version
+from pr_reviewer.db.checkpoints import open_checkpointer, setup_checkpoints
+from pr_reviewer.db.connection import connect, extension_version, server_version, table_exists
 from pr_reviewer.db.migrate import applied_migrations, discover_migrations, migrate
+from pr_reviewer.demo_graph import STATE_TYPES, DemoResult, new_thread_id, run_demo
 
 Handler = Callable[[argparse.Namespace], int]
 
@@ -93,6 +97,9 @@ def _db_migrate(args: argparse.Namespace) -> int:
         print("Database is up to date. Nothing to apply.")
     for migration in newly_applied:
         print(f"Applied {migration.version}_{migration.name}")
+    # LangGraph's checkpointer manages its own tables; its setup is safe to run every time.
+    setup_checkpoints()
+    print("LangGraph checkpoint tables are ready.")
     return 0
 
 
@@ -110,9 +117,11 @@ def _db_status(args: argparse.Namespace) -> int:
         postgres = server_version(conn)
         pgvector = extension_version(conn, "vector")
         applied = applied_migrations(conn)
-    print(f"Database:   {target}")
-    print(f"PostgreSQL: {postgres}")
-    print(f"pgvector:   {pgvector or 'not installed (run: pr-reviewer db migrate)'}")
+        checkpoints = table_exists(conn, "checkpoints")
+    print(f"Database:    {target}")
+    print(f"PostgreSQL:  {postgres}")
+    print(f"pgvector:    {pgvector or 'not installed (run: pr-reviewer db migrate)'}")
+    print(f"Checkpoints: {'ready' if checkpoints else 'missing (run: pr-reviewer db migrate)'}")
     print("Migrations:")
     migrations = discover_migrations()
     width = max((len(f"{m.version}_{m.name}") for m in migrations), default=0)
@@ -291,6 +300,61 @@ def _usage(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_demo_result(result: DemoResult) -> None:
+    """Print the claim, its tier and the review text of a demo run.
+
+    Args:
+        result (DemoResult): How the run ended.
+    """
+    if result.already_finished:
+        print("  This thread had already finished, so nothing ran again. Its saved steps:")
+        for line in result.log:
+            print(f"  {line}")
+    finding = result.finding
+    if finding is not None:
+        claim = finding.claim
+        lines = f"{claim.start_line}-{claim.end_line}"
+        category = f"{claim.category} {CATEGORY_NAMES[claim.category]}"
+        print(f"Claim:  {claim.file}, lines {lines}, {category}, confidence {claim.confidence}")
+        print(f"        {claim.summary}")
+        print(f"Tier:   {finding.tier.value} ({finding.tier.name.lower().replace('_', ' ')})")
+    print("Review text (what SWR-Bench would score):")
+    for line in result.review.splitlines():
+        print(f"  {line}")
+
+
+def _demo(args: argparse.Namespace) -> int:
+    """Run the demo LangGraph graph with one model profile, saving progress after each step.
+
+    Args:
+        args (argparse.Namespace): Parsed arguments. Uses `config`, `profile` and `thread`.
+
+    Returns:
+        int: Exit code, 0 on success and 1 if a model call stopped the run.
+    """
+    config = load_models_config(args.config)
+    profile = config.profile(args.profile)
+    read_api_key(config.provider(profile.provider))
+    thread_id = args.thread or new_thread_id(args.profile)
+    print(f"Demo graph with {args.profile}, thread {thread_id}")
+    with connect() as conn, open_checkpointer(STATE_TYPES) as checkpointer:
+        client = LLMClient(
+            args.profile, config, cache=PostgresCache(conn), usage=PostgresUsageLog(conn)
+        )
+        try:
+            result = run_demo(client, checkpointer, thread_id, on_step=lambda s: print(f"  {s}"))
+        except (openai.APIError, LimitError, LLMError) as exc:
+            reason = explain_api_error(exc) if isinstance(exc, openai.APIError) else str(exc)
+            print(
+                f"Stopped: {reason}\nThe finished steps are saved. To continue, run:\n"
+                f"  pr-reviewer demo {args.profile} --thread {thread_id}",
+                file=sys.stderr,
+            )
+            return 1
+    _print_demo_result(result)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser for the `pr-reviewer` command.
 
@@ -358,6 +422,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     usage.add_argument("--days", type=int, default=7, help="days of history to show (default: 7)")
     usage.set_defaults(handler=_usage)
+
+    demo = commands.add_parser(
+        "demo", parents=[config_option], help="run the demo LangGraph graph with one model"
+    )
+    demo.add_argument("profile", help="model profile name from the config")
+    demo.add_argument(
+        "--thread",
+        default=None,
+        help="thread ID to resume a stopped run or show a finished one (default: a new thread)",
+    )
+    demo.set_defaults(handler=_demo)
     return parser
 
 

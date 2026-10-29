@@ -137,14 +137,15 @@ class Claim(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _fill_in_gaps(cls, data: Any) -> Any:
-        """Accept two common shortcuts in model output before checking it.
+        """Accept three common slips in model output before checking it.
 
         Args:
             data (Any): The raw reply, usually a dict parsed from JSON.
 
         Returns:
-            Any: The reply with a missing end_line set to start_line, and an empty
-            expected_failure turned into None.
+            Any: The reply with a missing end_line set to start_line, an empty
+            expected_failure turned into None, and a category with its name cut off
+            ("F.2 Logic" becomes "F.2", as SWR-Bench's own scorer does).
         """
         if not isinstance(data, dict):
             return data
@@ -154,6 +155,9 @@ class Claim(BaseModel):
         failure = data.get("expected_failure")
         if isinstance(failure, str) and not failure.strip():
             data["expected_failure"] = None
+        category = data.get("category")
+        if isinstance(category, str) and category.split():
+            data["category"] = category.split()[0].rstrip(":.,")
         return data
 
     @model_validator(mode="after")
