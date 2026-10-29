@@ -14,7 +14,8 @@ How to run (inside the conda env, from the project folder):
     pr-reviewer llm ping <profile>            send a test prompt (answered from the cache if seen)
     pr-reviewer cache stats                   show how many replies the cache holds
     pr-reviewer usage                         show daily quota use and requests per day
-    pr-reviewer demo <profile>                run the demo LangGraph graph (--thread to resume)
+    pr-reviewer demo <profile>                run the demo LangGraph graph (--thread to resume,
+                                              --sample N for fresh answers)
 `python -m pr_reviewer.cli ...` works the same way.
 """
 
@@ -329,7 +330,8 @@ def _demo(args: argparse.Namespace) -> int:
     """Run the demo LangGraph graph with one model profile, saving progress after each step.
 
     Args:
-        args (argparse.Namespace): Parsed arguments. Uses `config`, `profile` and `thread`.
+        args (argparse.Namespace): Parsed arguments. Uses `config`, `profile`, `thread` and
+            `sample`.
 
     Returns:
         int: Exit code, 0 on success and 1 if a model call stopped the run.
@@ -345,7 +347,13 @@ def _demo(args: argparse.Namespace) -> int:
             args.profile, config, cache=PostgresCache(conn), usage=PostgresUsageLog(conn)
         )
         try:
-            result = run_demo(client, checkpointer, thread_id, on_step=lambda s: print(f"  {s}"))
+            result = run_demo(
+                client,
+                checkpointer,
+                thread_id,
+                on_step=lambda line: print(f"  {line}"),
+                sample=args.sample,
+            )
         except (openai.APIError, LimitError, LLMError) as exc:
             reason = explain_api_error(exc) if isinstance(exc, openai.APIError) else str(exc)
             print(
@@ -434,6 +442,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--thread",
         default=None,
         help="thread ID to resume a stopped run or show a finished one (default: a new thread)",
+    )
+    demo.add_argument(
+        "--sample",
+        type=int,
+        default=None,
+        help="ask for fresh answers instead of cached ones: 1, 2, ... (default: 0 for a new "
+        "thread, the thread's own number when resuming)",
     )
     demo.set_defaults(handler=_demo)
     return parser

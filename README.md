@@ -79,10 +79,20 @@ A small LangGraph graph reviews a built-in function with one model. It asks for 
 
 ```
 pr-reviewer demo <profile>                  # a new run (prints its thread ID)
+pr-reviewer demo <profile> --sample 1       # a new run that asks for fresh answers (cached separately)
 pr-reviewer demo <profile> --thread <id>    # resume a stopped run, or show a finished one
 ```
 
 A second run on a new thread asks the same questions, so the cache answers all of them.
+
+### End-to-end check
+
+`scripts/check_foundations.py` runs the demo twice with each model in the config, using a sample number never used before. Run 1 must reach the model. Run 2 must send no request and take every reply from the cache. It prints the requests, cache hits and tokens of each run, then PASS or FAIL per model, and uses a few requests of each free daily quota.
+
+```
+python scripts/check_foundations.py                       # every profile in the config
+python scripts/check_foundations.py groq-gpt-oss-120b     # only the profiles named
+```
 
 ## Tracing (LangSmith)
 

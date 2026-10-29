@@ -14,6 +14,7 @@ A run uses one model profile from start to end. With tracing on, each run shows 
 
 How to run (from the project folder, with the database up and migrated):
     pr-reviewer demo <profile>                  start a new run
+    pr-reviewer demo <profile> --sample 1       start a new run that asks for fresh answers
     pr-reviewer demo <profile> --thread <id>    resume a stopped run, or show a finished one
 """
 
@@ -138,6 +139,9 @@ class DemoState(TypedDict):
 
     Attributes:
         profile (str): Model profile of the run. A thread is never resumed with another one.
+        sample (int): Which answer every call asks for (see LLMClient.complete). 0 is the
+            normal one; a new number gets fresh replies instead of cached ones. Saved with the
+            thread, so a resumed run asks for the same one.
         code (str): The pull request to review.
         messages (list[ChatMessage]): The conversation with the reviewer so far. A rejected
             reply stays in it with the reason, so the next try is a new request and not a
@@ -150,6 +154,7 @@ class DemoState(TypedDict):
     """
 
     profile: str
+    sample: int
     code: str
     messages: list[ChatMessage]
     tries: int
@@ -262,7 +267,7 @@ def build_demo_graph(
             ChatMessage(role="user", content=state["code"]),
         ]
         tries = state["tries"] + 1
-        response = client.complete(messages)
+        response = client.complete(messages, sample=state["sample"])
         try:
             claim = parse_json_reply(response.text, Claim)
         except ValueError as exc:
@@ -307,7 +312,8 @@ def build_demo_graph(
             [
                 ChatMessage(role="system", content=VERIFY_PROMPT),
                 ChatMessage(role="user", content=question),
-            ]
+            ],
+            sample=state["sample"],
         )
         try:
             verdict = parse_json_reply(response.text, Verdict)
@@ -376,6 +382,7 @@ def run_demo(
     checkpointer: BaseCheckpointSaver[Any],
     thread_id: str,
     on_step: Callable[[str], None] | None = None,
+    sample: int | None = None,
 ) -> DemoResult:
     """Run the demo graph on a thread: start it, resume it, or show how it ended.
 
@@ -385,12 +392,15 @@ def run_demo(
         thread_id (str): The thread. A new ID starts a new run.
         on_step (Callable[[str], None] | None): Called with each log line as nodes finish,
             for live progress. None prints nothing.
+        sample (int | None): Which answer to ask the model for. A number not used before
+            gets fresh replies instead of cached ones. None means 0 for a new thread, and
+            the thread's own number when resuming.
 
     Returns:
         DemoResult: The finding, the review text and the log.
 
     Raises:
-        ConfigError: If the thread was started with another model profile.
+        ConfigError: If the thread was started with another model profile or sample.
         openai.APIError, LimitError, LLMError: If a model call fails. The steps that
             finished stay saved, so running the same thread again resumes after them.
     """
@@ -412,6 +422,13 @@ def run_demo(
                 f"Thread {thread_id} was run with {saved.values['profile']}. Resume it with "
                 "that profile, or start a new thread."
             )
+        # Threads saved before samples existed have none, which means 0.
+        saved_sample = saved.values.get("sample", 0)
+        if sample is not None and sample != saved_sample:
+            raise ConfigError(
+                f"Thread {thread_id} was run with sample {saved_sample}. Resume it with that "
+                "sample, or start a new thread."
+            )
         if not saved.next:
             return _result(thread_id, saved.values, resumed=False, already_finished=True)
         show(f"(resuming at {', '.join(saved.next)})")
@@ -419,6 +436,7 @@ def run_demo(
     else:
         start = DemoState(
             profile=client.name,
+            sample=sample or 0,
             code=DEMO_CODE,
             messages=[],
             tries=0,

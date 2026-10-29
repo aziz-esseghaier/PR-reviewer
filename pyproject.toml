@@ -51,7 +51,7 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["src", "tests"]
+files = ["src", "tests", "scripts"]
 # Lets mypy understand pydantic models, for example their constructor arguments.
 plugins = ["pydantic.mypy"]
 

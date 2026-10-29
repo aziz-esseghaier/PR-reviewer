@@ -2,8 +2,9 @@
 
 Runs the graph with a scripted fake model, so no real provider is called. Checks the normal
 path, the retry loop on bad JSON, giving up, a refuted claim, resuming a stopped run without
-asking the finished steps again, refusing to switch models on a thread, a second run on a new
-thread answered from the cache, and the run's LangSmith trace (caught in memory, never
+asking the finished steps again, refusing to switch models or samples on a thread, a second
+run on a new thread answered from the cache, a new sample asking the model again, and the
+run's LangSmith trace (caught in memory, never
 uploaded). Most tests keep checkpoints in memory; the ones marked
 `integration` use PostgreSQL in a throwaway database and are skipped when it isn't running.
 
@@ -177,6 +178,29 @@ def test_new_thread_is_answered_from_the_cache() -> None:
     assert offline.requests == []
     assert second.review == first.review
     assert all("from cache" in line for line in second.log[:2])
+
+
+def test_new_sample_asks_the_model_again() -> None:
+    """Check that a new sample number gets fresh replies instead of the cached ones."""
+    cache = MemoryCache()
+    run(ScriptedProvider([CLAIM_JSON, UPHELD]), thread="t1", cache=cache)
+    fresh = ScriptedProvider([CLAIM_JSON, UPHELD])
+    client = fake_client(fresh, cache=cache)
+    result = run_demo(client, memory_saver(), "t2", sample=1)
+    assert len(fresh.requests) == 2
+    assert all("asked the model" in line for line in result.log[:2])
+
+
+def test_thread_keeps_its_sample() -> None:
+    """Check that a thread resumes with its own sample, and refuses a different one."""
+    saver = memory_saver()
+    with pytest.raises(openai.AuthenticationError):
+        run_demo(fake_client(ScriptedProvider([401])), saver, "t1", sample=2)
+    with pytest.raises(ConfigError, match="was run with sample 2"):
+        run_demo(fake_client(ScriptedProvider([])), saver, "t1", sample=0)
+    result = run_demo(fake_client(ScriptedProvider([CLAIM_JSON, UPHELD])), saver, "t1")
+    assert result.resumed
+    assert result.finding is not None
 
 
 def test_run_is_traced_with_model_calls_inside_their_nodes(traces: FakeLangSmith) -> None:
