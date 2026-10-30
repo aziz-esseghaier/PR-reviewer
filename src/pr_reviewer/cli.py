@@ -19,6 +19,7 @@ How to run (inside the conda env, from the project folder):
     pr-reviewer bench download                download the pinned SWR-Bench dataset into data/
     pr-reviewer bench info                    count the benchmark's PRs by repo, year and kind
     pr-reviewer bench show <instance_id>      print one PR's commits, review input and known issues
+                                              (refuses PRs in the locked test set)
 `python -m pr_reviewer.cli ...` works the same way.
 """
 
@@ -39,7 +40,6 @@ from pr_reviewer import __version__
 from pr_reviewer.benchmark.dataset import (
     FIRST_YEAR,
     Instance,
-    is_benchmark_pr,
     load_dataset,
     select_prs,
 )
@@ -59,6 +59,15 @@ from pr_reviewer.benchmark.source import (
     default_dataset_path,
     download,
     matches_pin,
+)
+from pr_reviewer.benchmark.split import (
+    SPLIT_SHA256,
+    LockedTestSetError,
+    Split,
+    check_split,
+    ensure_unlocked,
+    load_split,
+    split_path,
 )
 from pr_reviewer.core.cache import PostgresCache, cache_stats
 from pr_reviewer.core.config import (
@@ -430,21 +439,41 @@ def _bench_download(args: argparse.Namespace) -> int:
     return 0
 
 
-def _print_counts(title: str, prs: Sequence[Instance], key: Callable[[Instance], str]) -> None:
+def _print_counts(
+    title: str, prs: Sequence[Instance], key: Callable[[Instance], str], split: Split | None
+) -> None:
     """Print a table of functional and clean PRs per group, such as per repo or per year.
 
     Args:
         title (str): Header of the first column, such as "By repo".
         prs (Sequence[Instance]): The PRs to count.
         key (Callable[[Instance], str]): Gives the group of a PR, such as its repo.
+        split (Split | None): Adds dev and test columns when given.
     """
-    counts = Counter((key(pr), pr.group) for pr in prs)
+    kinds = Counter((key(pr), pr.group) for pr in prs)
+    sets = Counter((key(pr), split.which(pr.instance_id)) for pr in prs) if split else Counter()
     rows = sorted({key(pr) for pr in prs})
     width = max(len(title), *(len(row) for row in rows))
-    print(f"\n{title:<{width}}  FUNCTIONAL  CLEAN  TOTAL")
+    print(f"\n{title:<{width}}  FUNCTIONAL  CLEAN  TOTAL" + ("  DEV  TEST" if split else ""))
     for row in rows:
-        functional, clean = counts[row, "functional"], counts[row, "clean"]
-        print(f"{row:<{width}}  {functional:>10}  {clean:>5}  {functional + clean:>5}")
+        functional, clean = kinds[row, "functional"], kinds[row, "clean"]
+        line = f"{row:<{width}}  {functional:>10}  {clean:>5}  {functional + clean:>5}"
+        if split:
+            line += f"  {sets[row, 'dev']:>3}  {sets[row, 'test']:>4}"
+        print(line)
+
+
+def _saved_split() -> Split | None:
+    """Read the dev/test split, if it has been made.
+
+    Returns:
+        Split | None: The split, or None when the file doesn't exist yet.
+
+    Raises:
+        DatasetError: If the file was edited or isn't a valid split.
+    """
+    path = split_path()
+    return load_split(path, sha256=SPLIT_SHA256) if path.exists() else None
 
 
 def _bench_info(args: argparse.Namespace) -> int:
@@ -490,8 +519,20 @@ def _bench_info(args: argparse.Namespace) -> int:
         f"Left out: {older} PRs from before {FIRST_YEAR}, and {only_e} from {FIRST_YEAR} "
         "onward with evolvability issues only"
     )
-    _print_counts("By repo", prs, lambda pr: pr.repo)
-    _print_counts("By year", prs, lambda pr: str(pr.year))
+    split = _saved_split()
+    if split is None:
+        print("\nSplit: not made yet (run: python scripts/make_split.py)")
+    else:
+        check_split(split, instances)
+        dev_functional = sum(
+            pr.group == "functional" and split.which(pr.instance_id) == "dev" for pr in prs
+        )
+        print(
+            f"\nSplit: {len(split.dev)} dev PRs ({dev_functional} with a functional issue), "
+            f"{len(split.test)} test PRs (locked until the final test-set run)"
+        )
+    _print_counts("By repo", prs, lambda pr: pr.repo, split)
+    _print_counts("By year", prs, lambda pr: str(pr.year), split)
     return 1 if problems else 0
 
 
@@ -505,8 +546,11 @@ def _bench_show(args: argparse.Namespace) -> int:
         int: Exit code, 0 on success.
 
     Raises:
-        DatasetError: If no PR has that ID.
+        LockedTestSetError: If the PR is in the test set.
+        DatasetError: If no PR has that ID, or the split file is missing or was edited.
     """
+    split = load_split(split_path(), sha256=SPLIT_SHA256)
+    ensure_unlocked(split, args.instance_id)
     path: Path = args.data or default_dataset_path()
     instances = load_dataset(path, sha256=DATASET.sha256)
     found = [pr for pr in instances if pr.instance_id == args.instance_id]
@@ -516,7 +560,7 @@ def _bench_show(args: argparse.Namespace) -> int:
         )
     pr = found[0]
     text = render_pr_details(pr)
-    used = "a benchmark PR" if is_benchmark_pr(pr) else "not used by the benchmark"
+    used = "dev set" if split.which(pr.instance_id) == "dev" else "not used by the benchmark"
     opened = pr.created_at.astimezone(UTC)
     print(f"{pr.instance_id}: {pr.repo}, opened {opened:%Y-%m-%d %H:%M} UTC, {pr.group}, {used}")
     print(f"Base commit:  {pr.base_commit} (as the dataset records it)")
@@ -678,6 +722,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Stopped: {exc}", file=sys.stderr)
     except LLMError as exc:
         print(f"Unusable model reply: {exc}", file=sys.stderr)
+    except LockedTestSetError as exc:
+        print(f"Refused: {exc}", file=sys.stderr)
     except DatasetError as exc:
         print(f"Benchmark data problem: {exc}", file=sys.stderr)
     finally:

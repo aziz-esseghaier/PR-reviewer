@@ -118,6 +118,16 @@ The benchmark uses the PRs from 2019 onward that are clean or have at least one 
 
 Each PR is reviewed as it stood when it was opened, before the reviewers' comments and the fixes that followed. SWR-Bench picks those commits by date, and loading the data re-checks every PR: a record whose reviewed commits include a fix, or don't match SWR-Bench's choice, is refused. The reviewer gets the PR's title, description and the diff of each reviewed commit, written exactly as SWR-Bench's own review script writes them (a test compares the two on all 1,000 PRs).
 
+### Dev and test sets
+
+The 433 PRs are split once into a dev set (130 PRs, used while building the reviewer) and a test set (303 PRs, used once for the final results). The split is stratified by repo, kind (functional or clean) and year, so each repo and each kind within it has about 30% of its PRs in dev. It's saved in `configs/swrbench_split.json`, and the code pins the file's fingerprint, so an edited split is refused.
+
+The test set is locked: code that asks for test PRs gets an error unless it explicitly unlocks them, which only the final test-set run does. `bench show` refuses test-set PRs.
+
+```
+python scripts/make_split.py   # check that the saved split is what the seed gives (it never replaces the file)
+```
+
 SWR-Bench's official scoring and review-generation scripts are copied unchanged into `third_party/swrbench/`, with SWR-Bench's MIT license. A test fails if they're edited.
 
 ## Checks
