@@ -16,7 +16,13 @@ import pytest
 from langsmith.run_helpers import tracing_context
 
 from pr_reviewer.core.llm import ChatMessage
-from pr_reviewer.core.tracing import describe_tracing, flush_traces, start_tracing, tracing_on
+from pr_reviewer.core.tracing import (
+    describe_tracing,
+    flush_traces,
+    start_tracing,
+    trace_task,
+    tracing_on,
+)
 from tests.fakes import FakeLangSmith, FakeProvider, MemoryCache, fake_client, metadata_of
 
 MESSAGES = [ChatMessage(role="user", content="Say hi.")]
@@ -75,6 +81,18 @@ def test_api_key_is_never_traced(traces: FakeLangSmith) -> None:
     fake_client(FakeProvider()).complete(MESSAGES)
     assert traces.caught
     assert "test-key" not in repr(traces.caught)
+
+
+def test_task_groups_its_model_calls_in_one_trace(traces: FakeLangSmith) -> None:
+    """Check that model calls made inside trace_task() are steps of that task, not traces."""
+    client = fake_client(FakeProvider("Hi there."))
+    with trace_task("score tiny", inputs={"prs": 2}, metadata={"judge": "m"}):
+        client.complete(MESSAGES)
+        client.complete([ChatMessage(role="user", content="Again.")])
+    task = traces.named("score tiny")
+    assert task["run_type"] == "chain"
+    assert task.get("parent_run_id") is None
+    assert [step["parent_run_id"] for step in traces.steps("llm")] == [task["id"], task["id"]]
 
 
 def test_nothing_is_traced_when_tracing_is_off() -> None:

@@ -9,8 +9,10 @@
 - official.py: loads SWR-Bench's scoring script unchanged, with our run_chat in place of its own.
 - judge.py: the fixed judge model, and the run_chat that sends the scorer's calls through our
   LLM client.
+- scoring.py: scores one review per PR with SWR-Bench's scorer (`pr-reviewer score`).
+- results.py: keeps the scores, in results/<name>/ and in PostgreSQL.
 
-Still to come: the scoring command, and the analysis of results.
+Still to come: the analysis of results across experiments.
 
 Imported, not run.
 """

@@ -211,6 +211,62 @@ def test_bench_show_marks_a_pr_the_benchmark_doesnt_use(
     assert "functional, not used by the benchmark" in capsys.readouterr().out
 
 
+def write_reviews(folder: Path, *instance_ids: str) -> Path:
+    """Write a reviews file with "No issues found." for each PR.
+
+    Args:
+        folder (Path): Folder to write into.
+        *instance_ids (str): The PRs.
+
+    Returns:
+        Path: The file.
+    """
+    path = folder / "reviews.jsonl"
+    lines = [f'{{"instance_id": "{i}", "review": "No issues found."}}\n' for i in instance_ids]
+    path.write_text("".join(lines), encoding="utf-8")
+    return path
+
+
+def test_score_refuses_reviews_by_the_judge_model(
+    tiny_dataset: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Check that reviews written by the judge's own model aren't scored."""
+    reviews = write_reviews(tmp_path, "psf__requests-5")
+    args = ["score", str(reviews), "--name", "t", "--reviewer", "google-gemini-3.5-flash-lite"]
+    assert main([*args, "--data", str(tiny_dataset)]) == 1
+    assert "the judge's own model" in capsys.readouterr().err
+
+
+def test_score_keeps_the_test_set_locked(
+    tiny_dataset: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Check that scoring the test set is refused without --unlock-test-set."""
+    reviews = write_reviews(tmp_path, "pallets__flask-4", "psf__requests-2")
+    args = ["score", str(reviews), "--name", "t", "--reviewer", "none", "--split", "test"]
+    assert main([*args, "--data", str(tiny_dataset)]) == 1
+    assert "Refused: The test set stays locked" in capsys.readouterr().err
+
+
+def test_score_needs_a_review_for_every_pr(
+    tiny_dataset: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Check that a reviews file missing a dev PR is refused before any judge call."""
+    reviews = write_reviews(tmp_path, "psf__requests-2")
+    args = ["score", str(reviews), "--name", "t", "--reviewer", "none"]
+    assert main([*args, "--data", str(tiny_dataset)]) == 1
+    err = capsys.readouterr().err
+    assert "1 of the 1 dev PRs have no review, such as psf__requests-5" in err
+
+
+def test_score_refuses_a_bad_experiment_name(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Check that a name that can't be a folder name is refused first."""
+    reviews = write_reviews(tmp_path, "psf__requests-5")
+    assert main(["score", str(reviews), "--name", "../x", "--reviewer", "none"]) == 1
+    assert "Bad experiment name" in capsys.readouterr().err
+
+
 def test_bench_show_unknown_id_explains(
     tiny_dataset: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

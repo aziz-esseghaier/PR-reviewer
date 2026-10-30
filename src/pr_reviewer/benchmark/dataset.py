@@ -20,9 +20,10 @@ Imported by other modules; the file isn't run directly.
 """
 
 import datetime as dt
-from collections.abc import Sequence
+import json
+from collections.abc import Collection, Sequence
 from pathlib import Path
-from typing import Annotated, Literal, Self, cast, get_args
+from typing import Annotated, Any, Literal, Self, cast, get_args
 
 from pydantic import (
     BaseModel,
@@ -319,6 +320,36 @@ def load_dataset(path: Path, sha256: str | None = DATASET.sha256) -> list[Instan
             seen.add(instance.instance_id)
             instances.append(instance)
     return instances
+
+
+def load_records(path: Path, instance_ids: Collection[str]) -> dict[str, dict[str, Any]]:
+    """Read the raw dataset records of some PRs, every field included.
+
+    SWR-Bench's scorer works on the raw records, the PR's discussion timeline included. Call
+    this after load_dataset(), which checks the file.
+
+    Args:
+        path (Path): The dataset file.
+        instance_ids (Collection[str]): The PRs to read.
+
+    Returns:
+        dict[str, dict[str, Any]]: Each PR's record as parsed from JSON, by instance ID.
+
+    Raises:
+        DatasetError: If one of the PRs isn't in the file.
+    """
+    wanted = set(instance_ids)
+    records: dict[str, dict[str, Any]] = {}
+    with path.open(encoding="utf-8") as file:
+        for line in file:
+            if line.strip():
+                record = json.loads(line)
+                if record["instance_id"] in wanted:
+                    records[record["instance_id"]] = record
+    missing = wanted - records.keys()
+    if missing:
+        raise DatasetError(f"{len(missing)} PRs aren't in {path.name}, such as {min(missing)}")
+    return records
 
 
 def is_benchmark_pr(instance: Instance) -> bool:

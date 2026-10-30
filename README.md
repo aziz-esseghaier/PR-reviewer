@@ -136,6 +136,23 @@ SWR-Bench scores a review with an LLM judge, which splits the review into points
 python scripts/compare_judges.py <model> ...   # compare candidate judges on test reviews with known right answers
 ```
 
+### Scoring reviews
+
+`pr-reviewer score` scores one review per dev PR with SWR-Bench's official scorer and the judge. The reviews file is JSONL, one line per PR, the format SWR-Bench's own review generator writes:
+
+```
+{"instance_id": "pydata__xarray-6710", "review": "1. xarray/core/dataset.py, line 12: ..."}
+```
+
+```
+pr-reviewer score reviews.jsonl --name my-experiment --reviewer groq-gpt-oss-120b
+pr-reviewer score reviews.jsonl --name a-baseline --reviewer none    # reviews written without a model
+```
+
+Before the first judge call it checks that every dev PR has exactly one review, that no review is for another PR, and that the reviews weren't written by the judge's own model. The test set is refused unless `--split test --unlock-test-set` is given, which only the final test-set run does. Judge replies are cached, so a run stopped by the daily quota continues where it stopped when run again, and scoring the same reviews again costs nothing. A dev run is about 130 judge calls.
+
+Results go to `results/<name>/`: `config.json` (what was scored and how), `metrics.json` (SWR-Bench's metrics), `summary.md` (readable tables: PR-level accuracy and false alarms, then precision, recall and F1 of the review points, overall and for functional and evolvability issues apart), and `raw/` (the reviews and every judge reply, not in git). Per-PR counts also go to the `pr_scores` table, next to `bench_prs` (each PR's repo, year, kind and set), for grouping with SQL. Run `pr-reviewer db migrate` once to create those tables.
+
 SWR-Bench's official scoring and review-generation scripts are copied unchanged into `third_party/swrbench/`, with SWR-Bench's MIT license. A test fails if they're edited.
 
 ## Checks

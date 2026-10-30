@@ -124,6 +124,30 @@ class ModelCallTrace:
 
 
 @contextmanager
+def trace_task(
+    name: str, inputs: dict[str, Any], metadata: dict[str, Any] | None = None
+) -> Iterator[None]:
+    """Group the model calls made inside the block under one step, so a long task is one trace.
+
+    For work that isn't a LangGraph run, such as scoring a set of reviews: without it, each of
+    its model calls would be a separate trace. With tracing off this does nothing.
+
+    Args:
+        name (str): The step's name, such as "score no-comments-baseline".
+        inputs (dict[str, Any]): What the task works on, shown as the step's input.
+        metadata (dict[str, Any] | None): Extra facts to show with the step.
+
+    Yields:
+        None: Run the task inside the block.
+    """
+    if not tracing_on():
+        yield
+        return
+    with langsmith.trace(name, run_type="chain", inputs=inputs, metadata=metadata or {}):
+        yield
+
+
+@contextmanager
 def trace_model_call(profile: str, request: "LLMRequest") -> Iterator[ModelCallTrace]:
     """Record one model call as a step of type "llm", inside the current trace if there is one.
 

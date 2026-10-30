@@ -20,6 +20,9 @@ How to run (inside the conda env, from the project folder):
     pr-reviewer bench info                    count the benchmark's PRs by repo, year and kind
     pr-reviewer bench show <instance_id>      print one PR's commits, review input and known issues
                                               (refuses PRs in the locked test set)
+    pr-reviewer score <reviews.jsonl> --name <experiment> --reviewer <model or none>
+                                              score one review per dev PR with SWR-Bench's
+                                              scorer and the judge; results go to results/<name>/
 `python -m pr_reviewer.cli ...` works the same way.
 """
 
@@ -32,6 +35,7 @@ from collections import Counter
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import openai
 import psycopg
@@ -41,7 +45,24 @@ from pr_reviewer.benchmark.dataset import (
     FIRST_YEAR,
     Instance,
     load_dataset,
+    load_records,
     select_prs,
+)
+from pr_reviewer.benchmark.judge import (
+    JUDGE_MODEL,
+    JUDGE_PROFILE,
+    JudgeChat,
+    check_reviewer,
+    make_judge,
+)
+from pr_reviewer.benchmark.results import (
+    Experiment,
+    check_folder,
+    plain_json,
+    results_folder,
+    save_bench_prs,
+    save_scores,
+    write_results,
 )
 from pr_reviewer.benchmark.review_input import (
     CHARS_PER_TOKEN,
@@ -49,6 +70,12 @@ from pr_reviewer.benchmark.review_input import (
     estimate_tokens,
     input_sizes,
     render_pr_details,
+)
+from pr_reviewer.benchmark.scoring import (
+    load_predictions,
+    match_predictions,
+    pr_score,
+    score_reviews,
 )
 from pr_reviewer.benchmark.source import (
     DATASET,
@@ -59,6 +86,7 @@ from pr_reviewer.benchmark.source import (
     default_dataset_path,
     download,
     matches_pin,
+    sha256_of,
 )
 from pr_reviewer.benchmark.split import (
     SPLIT_SHA256,
@@ -68,6 +96,7 @@ from pr_reviewer.benchmark.split import (
     ensure_unlocked,
     load_split,
     split_path,
+    split_prs,
 )
 from pr_reviewer.core.cache import PostgresCache, cache_stats
 from pr_reviewer.core.config import (
@@ -87,7 +116,7 @@ from pr_reviewer.core.llm import (
     list_provider_models,
 )
 from pr_reviewer.core.schemas import CATEGORY_NAMES
-from pr_reviewer.core.tracing import describe_tracing, flush_traces, start_tracing
+from pr_reviewer.core.tracing import describe_tracing, flush_traces, start_tracing, trace_task
 from pr_reviewer.core.usage import PostgresUsageLog, usage_by_day
 from pr_reviewer.db.checkpoints import open_checkpointer, setup_checkpoints
 from pr_reviewer.db.connection import connect, extension_version, server_version, table_exists
@@ -576,6 +605,106 @@ def _bench_show(args: argparse.Namespace) -> int:
     return 0
 
 
+def _score(args: argparse.Namespace) -> int:
+    """Score one review per PR of a set with SWR-Bench's scorer and the judge, and save it all.
+
+    Every input is checked before the first judge call. A run stopped by the judge's daily
+    quota, or with PRs the judge failed on, saves nothing; running the same command again
+    continues it, with the judged PRs answered from the cache.
+
+    Args:
+        args (argparse.Namespace): Parsed arguments. Uses `predictions`, `name`, `reviewer`,
+            `split`, `unlock_test_set`, `config` and `data`.
+
+    Returns:
+        int: Exit code, 0 when every PR was scored and the results were saved.
+    """
+    folder = results_folder(args.name)
+    config = load_models_config(args.config)
+    reviewer = check_reviewer(args.reviewer, config)
+    data: Path = args.data or default_dataset_path()
+    instances = load_dataset(data, sha256=DATASET.sha256)
+    split = load_split(split_path(), sha256=SPLIT_SHA256)
+    prs = split_prs(instances, split, args.split, unlock_test=args.unlock_test_set)
+    predictions_path: Path = args.predictions
+    predictions = match_predictions(load_predictions(predictions_path), prs, args.split)
+    predictions_sha256 = sha256_of(predictions_path)
+    check_folder(folder, predictions_sha256)
+    records = load_records(data, [pr.instance_id for pr in prs])
+    judge_profile = config.profile(JUDGE_PROFILE)
+    experiment = Experiment(
+        name=args.name,
+        date=datetime.now(UTC).strftime("%Y-%m-%d"),
+        split=args.split,
+        reviewer=reviewer,
+        predictions_file=predictions_path.name,
+        predictions_sha256=predictions_sha256,
+        reviews=len(predictions),
+        judge={
+            "profile": JUDGE_PROFILE,
+            "provider": judge_profile.provider,
+            "model": judge_profile.model,
+            "temperature": judge_profile.temperature,
+            "max_tokens": judge_profile.max_tokens,
+        },
+    )
+    total = len(predictions)
+    print(f"Scoring {total} reviews of the {args.split} set from {predictions_path.name}")
+    print(f"Judge: {JUDGE_MODEL}. Tracing: {describe_tracing()}")
+
+    def show(position: int, instance_id: str, result: dict[str, Any] | None) -> None:
+        """Print one line per judged PR."""
+        if result is None:
+            outcome = "no valid judgment after 3 tries"
+        else:
+            score = pr_score(result)
+            outcome = (
+                f"{score.points} points: {score.hits} hits, {score.false_alarms} false alarms, "
+                f"{score.misses} misses"
+            )
+        print(f"  [{position + 1}/{total}] {instance_id}: {outcome}")
+
+    with connect() as conn:
+        chat = JudgeChat(
+            make_judge(config, cache=PostgresCache(conn), usage=PostgresUsageLog(conn))
+        )
+        try:
+            with trace_task(
+                f"score {args.name}",
+                inputs={"predictions": predictions_path.name, "split": args.split, "prs": total},
+                metadata={"judge": JUDGE_MODEL, "reviewer": reviewer},
+            ):
+                run = score_reviews(chat, records, predictions, on_result=show)
+        except LimitError as exc:
+            print(
+                f"Stopped: {exc}\nThe PRs judged so far are cached: run the same command "
+                "again to continue.",
+                file=sys.stderr,
+            )
+            return 1
+        if run.failed:
+            print(
+                f"{len(run.failed)} PRs got no valid judgment, such as {run.failed[0]}, so "
+                "nothing was saved. Run the same command again: the judged PRs come from the "
+                "cache.",
+                file=sys.stderr,
+            )
+            return 1
+        write_results(folder, experiment, run, predictions_path)
+        save_bench_prs(conn, instances, split)
+        save_scores(conn, experiment, run)
+    overall = plain_json(run.analysis)["overall"]
+    cached = sum(response.cached for response in chat.responses)
+    print(
+        f"PR level: accuracy {overall['accuracy']:.3f}. Point level: precision "
+        f"{overall['precision_point']:.3f}, recall {overall['recall_point']:.3f}, "
+        f"F1 {overall['f1_point']:.3f}"
+    )
+    print(f"Judge calls: {chat.calls} ({chat.calls - cached} sent, {cached} from the cache)")
+    print(f"Saved {folder} (summary.md has the full tables)")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser for the `pr-reviewer` command.
 
@@ -682,6 +811,35 @@ def build_parser() -> argparse.ArgumentParser:
     )
     show.add_argument("instance_id", help="the PR's ID, such as psf__requests-2317")
     show.set_defaults(handler=_bench_show)
+
+    score = commands.add_parser(
+        "score",
+        parents=[config_option, data_option],
+        help="score one review per PR with SWR-Bench's scorer and the judge",
+    )
+    score.add_argument(
+        "predictions",
+        type=Path,
+        help='JSONL file with one review per PR: {"instance_id": ..., "review": ...}',
+    )
+    score.add_argument(
+        "--name", required=True, help="experiment name; results go to results/<name>/"
+    )
+    score.add_argument(
+        "--reviewer",
+        required=True,
+        help="the model that wrote the reviews (profile name or model ID), or 'none' for a "
+        "baseline written without a model",
+    )
+    score.add_argument(
+        "--split", choices=["dev", "test"], default="dev", help="the set to score (default: dev)"
+    )
+    score.add_argument(
+        "--unlock-test-set",
+        action="store_true",
+        help="allow --split test; only for the final test-set run",
+    )
+    score.set_defaults(handler=_score)
     return parser
 
 

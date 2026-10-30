@@ -79,6 +79,31 @@ def make_judge(
     return LLMClient(JUDGE_PROFILE, config, cache=cache, usage=usage)
 
 
+def check_reviewer(reviewer: str, config: ModelsConfig) -> str:
+    """Name the model that wrote the reviews, and refuse the judge's own model.
+
+    A model judging its own reviews could favor them, so the judge's model never reviews.
+
+    Args:
+        reviewer (str): A profile name from the config, a model ID, or "none" for a baseline
+            written without a model.
+        config (ModelsConfig): The loaded model config, to look up profile names.
+
+    Returns:
+        str: The reviewer's model ID, or "none".
+
+    Raises:
+        ConfigError: If the reviewer is the judge's model.
+    """
+    model = config.models[reviewer].model if reviewer in config.models else reviewer.strip()
+    if model.removeprefix("models/") == JUDGE_MODEL:
+        raise ConfigError(
+            f"The reviews were written by {JUDGE_MODEL}, the judge's own model. A model can't "
+            "judge its own reviews; review with another model."
+        )
+    return model
+
+
 def scorer_settings(client: LLMClient) -> SimpleNamespace:
     """Give the settings SWR-Bench's scorer passes to run_chat, taken from the judge's profile.
 
