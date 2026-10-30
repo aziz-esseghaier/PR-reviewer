@@ -1,8 +1,10 @@
 """
 Tests for the SWR-Bench reader and PR selection in benchmark/dataset.py.
 
-Most tests write a few small records shaped like SWR-Bench's. The last test reads the real
-dataset and checks the counts the benchmark relies on; it is skipped until the file is
+Most tests write a few small records shaped like SWR-Bench's. They check the fields, the
+selection rules, and that a record is refused when its reviewed commits could show the
+reviewer a fix or don't match SWR-Bench's cut. The last test reads the real dataset and
+checks the counts the benchmark relies on; it is skipped until the file is
 downloaded (`pr-reviewer bench download`).
 
 How to run (from the project folder):
@@ -35,13 +37,45 @@ def sha(number: int) -> str:
     return f"{number:040x}"
 
 
+FIX_SHA = sha(99)  # the commit make_row's PRs get fixed with, after the review
+
+
+def make_commit(
+    number: int, date: str, message: str = "Add average_price", files: Sequence[str] = ("a.py",)
+) -> dict[str, Any]:
+    """Make one commit entry shaped like SWR-Bench's, extra fields included.
+
+    Args:
+        number (int): Gives the commit's SHA.
+        date (str): Commit date, such as "2020-03-01T10:00:00+00:00".
+        message (str): Commit message.
+        files (Sequence[str]): Files the commit changes, one small patch each.
+
+    Returns:
+        dict[str, Any]: The commit.
+    """
+    return {
+        "type": "commit",
+        "sha": sha(number),
+        "message": message,
+        "author": "someone",
+        "date": date,
+        "diff_text": "diff --git ...",
+        "diff": [{"file": name, "patch": f"@@ -1 +1,2 @@\n+# {name}"} for name in files],
+    }
+
+
 def make_row(
     number: int,
     year: int = 2020,
     issues: Sequence[str] = ("F.2 Logic",),
     repo: str = "psf/requests",
+    commits: int = 1,
 ) -> dict[str, Any]:
     """Make one dataset record shaped like SWR-Bench's, extra fields included.
+
+    The PR is opened at noon on 1 March. Its reviewed commits come earlier that day; the
+    reviewers raise the issues on 2 March, and a fix commit follows on 3 March.
 
     Args:
         number (int): PR number, used in the instance ID.
@@ -49,30 +83,26 @@ def make_row(
         issues (Sequence[str]): Change types of its known issues, such as "F.2 Logic".
             Empty for a clean PR.
         repo (str): GitHub repo.
+        commits (int): How many commits are reviewed, at most 9.
 
     Returns:
         dict[str, Any]: The record, ready to write as one JSON line.
     """
-    commit = {
-        "type": "commit",
-        "sha": sha(2),
-        "message": "Add average_price",
-        "author": "someone",
-        "date": f"{year}-03-01T12:00:00+00:00",
-        "diff_text": "diff --git a/src/cart.py b/src/cart.py",
-        "diff": [{"file": "src/cart.py", "patch": "@@ -1 +1,2 @@\n+def average_price(): ..."}],
-    }
+    reviewed = [
+        make_commit(10 + index, f"{year}-03-01T0{index}:00:00+00:00") for index in range(commits)
+    ]
+    fix = make_commit(99, f"{year}-03-03T12:00:00+00:00", message="Handle empty carts")
     changes = [
         {
             "change_type": change_type,
-            "change_introducing": {"commit_sha": sha(2), "code_snippet": "def average_price()"},
+            "change_introducing": {"commit_sha": reviewed[-1]["sha"], "code_snippet": "def f()"},
             "change_discussion": {
                 "discussion_summary": "average_price divides by zero for an empty cart.",
                 "first_mention_timestamp": f"{year}-03-02T12:00:00+00:00",
                 "original_reviewer_comment": "What if the cart is empty?",
             },
             "change_resolve_info": {
-                "commit_sha": sha(3),
+                "commit_sha": fix["sha"],
                 "code_snippet": "if not items: return 0",
                 "resolution_explanation": "Returns 0 for an empty cart.",
             },
@@ -88,9 +118,9 @@ def make_row(
         "base_commit": sha(1),
         "created_at": f"{year}-03-01T12:00:00+00:00",
         "changes": changes,
-        "pr_commits": [commit],
+        "pr_commits": reviewed,
         "pr_timeline": [{"type": "description", "user": "someone", "body": "Adds it."}],
-        "all_commits": [commit, {**commit, "sha": sha(3), "message": "Handle empty carts"}],
+        "all_commits": [*reviewed, fix],
     }
 
 
@@ -124,14 +154,17 @@ def load(folder: Path, rows: Sequence[dict[str, Any]]) -> list[Instance]:
 
 def test_record_is_read_with_its_commits_and_issues(tmp_path: Path) -> None:
     """Check the fields of one PR with a functional and an evolvability issue."""
-    (pr,) = load(tmp_path, [make_row(7, issues=("F.2 Logic", "E.1.1 Textual Changes"))])
+    row = make_row(7, issues=("F.2 Logic", "E.1.1 Textual Changes"), commits=2)
+    (pr,) = load(tmp_path, [row])
     assert pr.instance_id == "psf__requests-7"
     assert pr.year == 2020
-    assert pr.pr_commits[0].diff[0].file == "src/cart.py"
+    assert pr.pr_commits[0].diff[0].file == "a.py"
+    assert pr.head_commit == sha(11)
+    assert [commit.sha for commit in pr.all_commits] == [sha(10), sha(11), FIX_SHA]
     assert [issue.category for issue in pr.changes] == ["F.2", "E.1.1"]
     assert [issue.is_functional for issue in pr.changes] == [True, False]
     assert pr.changes[0].change_resolve_info is not None
-    assert pr.changes[0].change_resolve_info.commit_sha == sha(3)
+    assert pr.changes[0].change_resolve_info.commit_sha == FIX_SHA
     assert pr.group == "functional"
     assert "pr_timeline" not in pr.model_dump()  # fields not used yet are skipped
 
@@ -166,8 +199,9 @@ def test_selection_keeps_recent_clean_and_functional_prs(tmp_path: Path) -> None
 
 def test_year_is_counted_in_utc(tmp_path: Path) -> None:
     """Check that a PR opened late on New Year's Eve west of UTC counts for the next year."""
-    row = make_row(1, year=2018)
+    row = make_row(1, year=2018, issues=())
     row["created_at"] = "2018-12-31T23:30:00-02:00"  # 01:30 UTC on 1 January 2019
+    row["all_commits"] = row["pr_commits"]  # no later commits, so the review cut stays the same
     (pr,) = load(tmp_path, [row])
     assert pr.year == 2019
 
@@ -188,6 +222,26 @@ def _no_commits(row: dict[str, Any]) -> None:
     row["pr_commits"] = []
 
 
+def _commit_left_out(row: dict[str, Any]) -> None:
+    # A commit made before the PR was opened, but missing from the reviewed ones.
+    row["all_commits"].insert(0, make_commit(5, "2020-02-28T09:00:00+00:00"))
+
+
+def _fix_reviewed(row: dict[str, Any]) -> None:
+    # The fix is dated before the PR was opened and is reviewed: the reviewer would see it.
+    fix = row["all_commits"][-1]
+    fix["date"] = "2020-03-01T11:00:00+00:00"
+    row["pr_commits"].append(fix)
+
+
+def _origin_not_reviewed(row: dict[str, Any]) -> None:
+    row["changes"][0]["change_introducing"]["commit_sha"] = FIX_SHA
+
+
+def _raised_too_early(row: dict[str, Any]) -> None:
+    row["changes"][0]["change_discussion"]["first_mention_timestamp"] = row["created_at"]
+
+
 @pytest.mark.parametrize(
     ("spoil", "message"),
     [
@@ -195,6 +249,10 @@ def _no_commits(row: dict[str, Any]) -> None:
         (_flag_mismatch, "change_introduced doesn't match"),
         (_short_sha, "base_commit: String should match pattern"),
         (_no_commits, "pr_commits: Tuple should have at least 1 item"),
+        (_commit_left_out, "pr_commits aren't the PR's commits dated at or before created_at"),
+        (_fix_reviewed, "pr_commits include the fix commit 0000000"),
+        (_origin_not_reviewed, "pr_commits lack the commit 0000000 that brought in an issue"),
+        (_raised_too_early, "an issue was raised before the PR was opened"),
     ],
 )
 def test_bad_record_is_reported_with_its_line(

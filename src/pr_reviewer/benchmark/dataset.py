@@ -4,7 +4,14 @@ Each line of the file is one PR, which SWR-Bench calls an instance: its repo, ti
 description, the commits to review, and the issues the PR's real reviewers raised. SWR-Bench
 calls these issues "changes". Clean PRs have none. Every record is checked with pydantic, so
 a surprise in the data fails loudly instead of skewing results. Fields not used yet, such as
-the PR's discussion timeline and the commits after the reviewed ones, are skipped.
+the PR's discussion timeline, are skipped.
+
+The PR is reviewed as it stood when it was opened: SWR-Bench keeps the commits dated at or
+before created_at, in date order (convert_dataset() in its build_dataset.py). Fixes come
+later, after the review. Loading re-derives that cut from the PR's full commit list and also
+checks that no fix commit is reviewed, that every commit bringing in an issue is, and that
+every issue was raised after the reviewed state. A record that breaks any of these is
+refused, so the reviewer can never see a fix.
 
 The benchmark uses PRs from 2019 onward that are clean or have at least one functional (F.*)
 issue. PRs whose issues are all evolvability (E.*) ones are left out.
@@ -56,18 +63,28 @@ class FilePatch(BaseModel):
     patch: str
 
 
-class Commit(BaseModel):
-    """One commit of the PR.
+class CommitRef(BaseModel):
+    """A commit's SHA and date, without its changes.
 
     Attributes:
         sha (Sha): The commit's SHA.
-        message (str): The commit message.
-        diff (tuple[FilePatch, ...]): The changes, one entry per file.
+        date (dt.datetime): When it was committed.
     """
 
     model_config = ConfigDict(extra="ignore", frozen=True)
 
     sha: Sha
+    date: dt.datetime
+
+
+class Commit(CommitRef):
+    """One reviewed commit of the PR, with its changes.
+
+    Attributes:
+        message (str): The commit message.
+        diff (tuple[FilePatch, ...]): The changes, one entry per file.
+    """
+
     message: str
     diff: tuple[FilePatch, ...]
 
@@ -92,11 +109,13 @@ class IssueDiscussion(BaseModel):
     Attributes:
         discussion_summary (str): SWR-Bench's summary of the issue. The judge compares
             review points with it.
+        first_mention_timestamp (dt.datetime): When a reviewer first raised it.
     """
 
     model_config = ConfigDict(extra="ignore", frozen=True)
 
     discussion_summary: str
+    first_mention_timestamp: dt.datetime
 
 
 class IssueFix(BaseModel):
@@ -169,10 +188,12 @@ class Instance(BaseModel):
         pr_title (str): The PR's title.
         pr_statement (str): The PR's description.
         change_introduced (bool): Whether the PR has known issues.
-        base_commit (Sha): The commit the PR starts from.
-        created_at (dt.datetime): When the PR was opened.
+        base_commit (Sha): The PR's base commit as the dataset records it. SWR-Bench's own
+            environment builder starts instead from the parent of the first reviewed commit.
+        created_at (dt.datetime): When the PR was opened: the moment it is reviewed at.
         changes (tuple[KnownIssue, ...]): The known issues. Empty for a clean PR.
         pr_commits (tuple[Commit, ...]): The commits to review, oldest first.
+        all_commits (tuple[CommitRef, ...]): Every commit of the PR, including later fixes.
     """
 
     model_config = ConfigDict(extra="ignore", frozen=True)
@@ -186,6 +207,7 @@ class Instance(BaseModel):
     created_at: dt.datetime
     changes: tuple[KnownIssue, ...]
     pr_commits: tuple[Commit, ...] = Field(min_length=1)
+    all_commits: tuple[CommitRef, ...]
 
     @model_validator(mode="after")
     def _check_issue_flag(self) -> Self:
@@ -200,6 +222,39 @@ class Instance(BaseModel):
         if self.change_introduced != bool(self.changes):
             raise ValueError("change_introduced doesn't match the list of changes")
         return self
+
+    @model_validator(mode="after")
+    def _check_review_state(self) -> Self:
+        """Make sure the reviewed commits are the PR as it was opened, before any fix.
+
+        Returns:
+            Self: The unchanged instance.
+
+        Raises:
+            ValueError: If the reviewed commits aren't the ones dated at or before created_at,
+                a fix commit is reviewed, a commit that brought in an issue isn't, or an issue
+                was raised before the PR was opened.
+        """
+        made_by_then = [commit for commit in self.all_commits if commit.date <= self.created_at]
+        expected = [commit.sha for commit in sorted(made_by_then, key=lambda c: c.date)]
+        reviewed = [commit.sha for commit in self.pr_commits]
+        if reviewed != expected:
+            raise ValueError("pr_commits aren't the PR's commits dated at or before created_at")
+        for issue in self.changes:
+            fix = issue.change_resolve_info
+            if fix is not None and fix.commit_sha in reviewed:
+                raise ValueError(f"pr_commits include the fix commit {fix.commit_sha[:7]}")
+            if issue.change_introducing.commit_sha not in reviewed:
+                sha = issue.change_introducing.commit_sha[:7]
+                raise ValueError(f"pr_commits lack the commit {sha} that brought in an issue")
+            if issue.change_discussion.first_mention_timestamp <= self.created_at:
+                raise ValueError("an issue was raised before the PR was opened")
+        return self
+
+    @property
+    def head_commit(self) -> str:
+        """The last reviewed commit: the PR's code as it is reviewed."""
+        return self.pr_commits[-1].sha
 
     @property
     def year(self) -> int:

@@ -110,10 +110,13 @@ The benchmark is [SWR-Bench](https://github.com/ZZR0/SWRench): 1,000 real PRs fr
 
 ```
 pr-reviewer bench download     # download the dataset (85 MB) into data/ (skipped when it's already there)
-pr-reviewer bench info         # count the benchmark's PRs by repo, year and kind
+pr-reviewer bench info         # count the benchmark's PRs by repo, year and kind, and their input sizes
+pr-reviewer bench show <id>    # one PR: its commits, the text the reviewer sees, and its known issues
 ```
 
 The benchmark uses the PRs from 2019 onward that are clean or have at least one functional (`F.*`) issue: 433 PRs, 140 with a functional issue and 293 clean. PRs whose issues are all evolvability (`E.*`) ones are left out.
+
+Each PR is reviewed as it stood when it was opened, before the reviewers' comments and the fixes that followed. SWR-Bench picks those commits by date, and loading the data re-checks every PR: a record whose reviewed commits include a fix, or don't match SWR-Bench's choice, is refused. The reviewer gets the PR's title, description and the diff of each reviewed commit, written exactly as SWR-Bench's own review script writes them (a test compares the two on all 1,000 PRs).
 
 SWR-Bench's official scoring and review-generation scripts are copied unchanged into `third_party/swrbench/`, with SWR-Bench's MIT license. A test fails if they're edited.
 

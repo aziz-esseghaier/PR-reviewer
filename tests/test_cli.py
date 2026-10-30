@@ -18,7 +18,7 @@ from pr_reviewer import __version__
 from pr_reviewer.benchmark.source import DATASET, PinnedFile, sha256_of
 from pr_reviewer.cli import main
 from pr_reviewer.db.migrate import migrate
-from tests.benchmark.test_dataset import make_row, write_dataset
+from tests.benchmark.test_dataset import make_row, sha, write_dataset
 
 MODELS_CONFIG = """
 providers:
@@ -142,6 +142,28 @@ def test_bench_info_counts_the_benchmark_prs(
     assert "pallets/flask           0      1      1" in out
     assert "2019              1      0      1" in out
     assert "unchanged copies in third_party/swrbench/" in out
+    assert "0 inputs over 8,000 tokens" in out
+
+
+def test_bench_show_prints_the_review_input_and_answer_key(
+    tiny_dataset: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Check that `bench show` prints the commits, the review input and the known issues."""
+    assert main(["bench", "show", "psf__requests-5", "--data", str(tiny_dataset)]) == 0
+    out = capsys.readouterr().out
+    assert "psf__requests-5: psf/requests, opened 2021-03-01 12:00 UTC, functional" in out
+    assert f"Head commit:  {sha(10)} (last of 1 reviewed commits)" in out
+    assert "- **Title**: PR 5 \n" in out
+    assert "1. E.2 Visual Representation: average_price divides" in out
+    assert "2. F.4 Check: " in out
+
+
+def test_bench_show_unknown_id_explains(
+    tiny_dataset: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Check that an unknown ID exits 1 and shows what IDs look like."""
+    assert main(["bench", "show", "psf__requests-404", "--data", str(tiny_dataset)]) == 1
+    assert "No PR with the ID 'psf__requests-404'" in capsys.readouterr().err
 
 
 def test_bench_info_without_the_file_says_how_to_download(

@@ -18,10 +18,12 @@ How to run (inside the conda env, from the project folder):
                                               --sample N for fresh answers)
     pr-reviewer bench download                download the pinned SWR-Bench dataset into data/
     pr-reviewer bench info                    count the benchmark's PRs by repo, year and kind
+    pr-reviewer bench show <instance_id>      print one PR's commits, review input and known issues
 `python -m pr_reviewer.cli ...` works the same way.
 """
 
 import argparse
+import io
 import logging
 import os
 import sys
@@ -34,7 +36,20 @@ import openai
 import psycopg
 
 from pr_reviewer import __version__
-from pr_reviewer.benchmark.dataset import FIRST_YEAR, Instance, load_dataset, select_prs
+from pr_reviewer.benchmark.dataset import (
+    FIRST_YEAR,
+    Instance,
+    is_benchmark_pr,
+    load_dataset,
+    select_prs,
+)
+from pr_reviewer.benchmark.review_input import (
+    CHARS_PER_TOKEN,
+    LARGE_INPUT_TOKENS,
+    estimate_tokens,
+    input_sizes,
+    render_pr_details,
+)
 from pr_reviewer.benchmark.source import (
     DATASET,
     SOURCE_COMMIT,
@@ -89,6 +104,18 @@ class _StderrHandler(logging.Handler):
             record (logging.LogRecord): The log entry to print.
         """
         print(self.format(record), file=sys.stderr)
+
+
+def _replace_unprintable_characters() -> None:
+    """Make printing never fail on a character the console can't show.
+
+    PR text can hold any Unicode character. On Windows, output piped to another program may use
+    an old code page, and printing such a character would raise UnicodeEncodeError. It prints
+    "?" instead.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(errors="replace")
 
 
 def _show_progress_messages() -> None:
@@ -450,6 +477,15 @@ def _bench_info(args: argparse.Namespace) -> int:
     print(f"  {len(functional)} with a functional issue ({mixed} also have evolvability issues)")
     print(f"  {len(prs) - len(functional)} clean")
     print(f"  Known issues in them: {issues[True]} functional, {issues[False]} evolvability")
+    sizes = input_sizes(prs)
+    print(
+        f"  Review input: median {sizes.median:,} tokens, 90% at most {sizes.p90:,}, "
+        f"largest {sizes.largest:,} (about {CHARS_PER_TOKEN} characters per token)"
+    )
+    print(
+        f"  {sizes.over_limit} inputs over {LARGE_INPUT_TOKENS:,} tokens, "
+        "Groq's free per-minute limit"
+    )
     print(
         f"Left out: {older} PRs from before {FIRST_YEAR}, and {only_e} from {FIRST_YEAR} "
         "onward with evolvability issues only"
@@ -457,6 +493,43 @@ def _bench_info(args: argparse.Namespace) -> int:
     _print_counts("By repo", prs, lambda pr: pr.repo)
     _print_counts("By year", prs, lambda pr: str(pr.year))
     return 1 if problems else 0
+
+
+def _bench_show(args: argparse.Namespace) -> int:
+    """Print one PR: its commits, the text the reviewer sees, and its known issues.
+
+    Args:
+        args (argparse.Namespace): Parsed arguments. Uses `data` and `instance_id`.
+
+    Returns:
+        int: Exit code, 0 on success.
+
+    Raises:
+        DatasetError: If no PR has that ID.
+    """
+    path: Path = args.data or default_dataset_path()
+    instances = load_dataset(path, sha256=DATASET.sha256)
+    found = [pr for pr in instances if pr.instance_id == args.instance_id]
+    if not found:
+        raise DatasetError(
+            f"No PR with the ID {args.instance_id!r}. IDs look like psf__requests-2317."
+        )
+    pr = found[0]
+    text = render_pr_details(pr)
+    used = "a benchmark PR" if is_benchmark_pr(pr) else "not used by the benchmark"
+    opened = pr.created_at.astimezone(UTC)
+    print(f"{pr.instance_id}: {pr.repo}, opened {opened:%Y-%m-%d %H:%M} UTC, {pr.group}, {used}")
+    print(f"Base commit:  {pr.base_commit} (as the dataset records it)")
+    print(f"Head commit:  {pr.head_commit} (last of {len(pr.pr_commits)} reviewed commits)")
+    print(f"Review input: {len(text):,} characters, about {estimate_tokens(text):,} tokens")
+    print("\n===== Review input: what the reviewer sees (written by the PR's author) =====")
+    print(text)
+    print("===== Known issues: the answer key, never shown to the reviewer =====")
+    if not pr.changes:
+        print("None: the PR is clean.")
+    for number, issue in enumerate(pr.changes, start=1):
+        print(f"{number}. {issue.change_type}: {issue.change_discussion.discussion_summary}")
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -560,6 +633,11 @@ def build_parser() -> argparse.ArgumentParser:
     bench_commands.add_parser(
         "info", parents=[data_option], help="count the benchmark's PRs by repo, year and kind"
     ).set_defaults(handler=_bench_info)
+    show = bench_commands.add_parser(
+        "show", parents=[data_option], help="print one PR's commits, review input and known issues"
+    )
+    show.add_argument("instance_id", help="the PR's ID, such as psf__requests-2317")
+    show.set_defaults(handler=_bench_show)
     return parser
 
 
@@ -580,6 +658,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.print_help()
         return 0
     load_env()
+    _replace_unprintable_characters()
     _show_progress_messages()
     start_tracing()
     try:
