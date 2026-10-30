@@ -22,6 +22,10 @@ dependencies = [
     "langgraph>=1.2",  # graphs of steps with typed state, loops and saved progress
     "langgraph-checkpoint-postgres>=3.2",  # saves graph progress in PostgreSQL, so runs can resume
     "langsmith>=0.14",  # traces graph runs and model calls to smith.langchain.com, when turned on
+    # Imported by SWR-Bench's official scoring script (third_party/swrbench/evaluation_struct.py):
+    "numpy>=2.0",
+    "tqdm>=4.66",
+    "loguru>=0.7",
 ]
 
 [project.optional-dependencies]

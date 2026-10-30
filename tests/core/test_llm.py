@@ -65,6 +65,7 @@ def test_complete_sends_profile_settings_and_reads_reply() -> None:
         {"role": "system", "content": "Be brief."},
         {"role": "user", "content": "Hello"},
     ]
+    assert "response_format" not in body
     assert response.text == "Hi there."
     assert response.profile == "fake-small"
     assert response.provider == "fake"
@@ -108,6 +109,30 @@ def test_changed_prompt_or_sample_asks_again() -> None:
     client.complete([{"role": "user", "content": "Hello"}], sample=1)
 
     assert len(provider.requests) == 3
+
+
+def test_reply_format_is_sent_and_cached_separately() -> None:
+    """Check that a JSON schema reaches the provider, and that it's part of the cache key."""
+    provider = FakeProvider('{"ok": true}')
+    client = fake_client(provider, cache=MemoryCache())
+    schema = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "answer",
+            "strict": True,
+            "schema": {"type": "object", "properties": {"ok": {"type": "boolean"}}},
+        },
+    }
+    messages: list[ChatMessage] = [{"role": "user", "content": "Is it ok?"}]
+
+    client.complete(messages, response_format=schema)
+    again = client.complete(messages, response_format=schema)
+    client.complete(messages)  # same messages, plain text: a different request
+
+    assert json.loads(provider.requests[0].content)["response_format"] == schema
+    assert again.cached is True
+    assert len(provider.requests) == 2
+    assert "response_format" not in json.loads(provider.requests[1].content)
 
 
 def test_empty_reply_is_not_cached() -> None:

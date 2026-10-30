@@ -73,12 +73,24 @@ def test_request_key_is_a_stable_sha256() -> None:
         {"temperature": 0.7},
         {"max_tokens": 65},
         {"sample": 1},
+        {"response_format": {"type": "json_object"}},
     ],
 )
 def test_request_key_changes_with_any_field(change: dict[str, Any]) -> None:
     """Check that changing any part of the request gives a different fingerprint."""
     changed = REQUEST.model_copy(update=change)
     assert request_key(changed) != request_key(REQUEST)
+
+
+def test_request_key_of_older_requests_is_unchanged() -> None:
+    """Check that a request without a reply format keeps the key it had before formats existed.
+
+    The expected value was computed with the recipe from before the response_format field,
+    so replies already in the cache stay reachable.
+    """
+    assert request_key(REQUEST) == (
+        "b18da43bcdee8a58a301cc0d47fb150165b63d6cf2a251648037ba9751697387"
+    )
 
 
 @pytest.mark.integration

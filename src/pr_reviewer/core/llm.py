@@ -22,7 +22,7 @@ import logging
 import time
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Literal, Protocol, TypedDict
+from typing import Any, Literal, Protocol, TypedDict, cast
 
 import httpx2
 import openai
@@ -32,6 +32,7 @@ from openai.types.chat import (
     ChatCompletionMessageParam,
     ChatCompletionSystemMessageParam,
     ChatCompletionUserMessageParam,
+    completion_create_params,
 )
 from pydantic import BaseModel, ConfigDict
 
@@ -80,6 +81,9 @@ class LLMRequest(BaseModel):
         max_tokens (int): Longest reply allowed, in tokens.
         sample (int): Which answer to this exact request. 0 is the normal one. 1, 2, ... ask the
             provider again and are cached separately.
+        response_format (dict[str, Any] | None): The reply format to ask for, in the OpenAI
+            format, such as {"type": "json_schema", "json_schema": {...}}. None means plain
+            text. Left at None, it isn't part of the cache key, so older keys stay valid.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -90,6 +94,7 @@ class LLMRequest(BaseModel):
     temperature: float
     max_tokens: int
     sample: int = 0
+    response_format: dict[str, Any] | None = None
 
 
 class LLMResponse(BaseModel):
@@ -261,7 +266,13 @@ class LLMClient:
         )
         self._sdk = _make_sdk(config.provider(self.provider_name), api_key, http_client)
 
-    def complete(self, messages: Sequence[ChatMessage], *, sample: int = 0) -> LLMResponse:
+    def complete(
+        self,
+        messages: Sequence[ChatMessage],
+        *,
+        sample: int = 0,
+        response_format: dict[str, Any] | None = None,
+    ) -> LLMResponse:
         """Get the model's reply to a conversation, from the cache if it was asked before.
 
         Args:
@@ -270,6 +281,10 @@ class LLMClient:
                 to ask the provider again, for example when a cached reply was unusable.
                 Each sample is cached separately. At temperature 0 a new sample is often
                 the same text, because the model has little randomness to draw on.
+            response_format (dict[str, Any] | None): Ask for replies in a fixed format, such
+                as a JSON schema, in the OpenAI format. The provider must support it. None
+                asks for plain text. The reply text still needs checking: not every
+                provider enforces the format strictly.
 
         Returns:
             LLMResponse: The reply text, token counts, timing and whether it came from the cache.
@@ -288,6 +303,7 @@ class LLMClient:
             temperature=self.profile.temperature,
             max_tokens=self.profile.max_tokens,
             sample=sample,
+            response_format=response_format,
         )
         with trace_model_call(self.name, request) as trace:
             response = self._answer(request)
@@ -353,12 +369,18 @@ class LLMClient:
             limit_wait_s += waited_s
             sent_at = self._clock.wall_time()
             started = time.perf_counter()
+            reply_format = (
+                openai.omit
+                if request.response_format is None
+                else cast(completion_create_params.ResponseFormat, request.response_format)
+            )
             try:
                 completion = self._sdk.chat.completions.create(
                     model=request.model,
                     messages=[_to_sdk_message(message) for message in request.messages],
                     temperature=request.temperature,
                     max_tokens=request.max_tokens,
+                    response_format=reply_format,
                 )
             except openai.APIError as exc:
                 outcome, status = outcome_of(exc)

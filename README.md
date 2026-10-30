@@ -128,6 +128,14 @@ The test set is locked: code that asks for test PRs gets an error unless it expl
 python scripts/make_split.py   # check that the saved split is what the seed gives (it never replaces the file)
 ```
 
+### Judge model
+
+SWR-Bench scores a review with an LLM judge, which splits the review into points and matches them to the PR's known issues. The judge is `gemini-3.5-flash-lite` (profile `judge-gemini-3.5-flash-lite`), fixed for the whole project so every result is scored the same way. The code refuses a judge profile whose model or settings changed, and that model isn't used as a reviewer. How it was chosen is in `results/judge-choice/decision.md`.
+
+```
+python scripts/compare_judges.py <model> ...   # compare candidate judges on test reviews with known right answers
+```
+
 SWR-Bench's official scoring and review-generation scripts are copied unchanged into `third_party/swrbench/`, with SWR-Bench's MIT license. A test fails if they're edited.
 
 ## Checks

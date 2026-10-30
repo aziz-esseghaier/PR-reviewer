@@ -6,9 +6,11 @@
   picks the ones the benchmark uses.
 - review_input.py: the text a reviewer sees for a PR, written as SWR-Bench writes it.
 - split.py: the fixed dev/test split, and the lock that keeps the test set unused.
+- official.py: loads SWR-Bench's scoring script unchanged, with our run_chat in place of its own.
+- judge.py: the fixed judge model, and the run_chat that sends the scorer's calls through our
+  LLM client.
 
-Still to come: scoring with SWR-Bench's official evaluation script, and the analysis of
-results.
+Still to come: the scoring command, and the analysis of results.
 
 Imported, not run.
 """

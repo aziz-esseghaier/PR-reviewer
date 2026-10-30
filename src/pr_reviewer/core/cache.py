@@ -32,7 +32,8 @@ def request_key(request: LLMRequest) -> str:
     """Compute the fingerprint the cache stores a request's reply under.
 
     The request is written as JSON with sorted keys and no spaces, so the same request always
-    gives the same text, and then hashed with SHA-256.
+    gives the same text, and then hashed with SHA-256. Fields left at None, such as no reply
+    format, are left out, so adding such a field never changes the keys of older requests.
 
     Args:
         request (LLMRequest): The request to fingerprint.
@@ -41,7 +42,10 @@ def request_key(request: LLMRequest) -> str:
         str: 64 hex characters. Any change to the request gives a different value.
     """
     canonical = json.dumps(
-        request.model_dump(mode="json"), sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        request.model_dump(mode="json", exclude_none=True),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
     )
     return hashlib.sha256(f"v{KEY_VERSION}:{canonical}".encode()).hexdigest()
 

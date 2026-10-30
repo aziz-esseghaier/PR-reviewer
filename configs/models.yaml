@@ -27,12 +27,25 @@ models:
       requests_per_day: 1000
       tokens_per_day: 200000  # Groq's published free tier for this model
 
+  # The same model as the judge below, so it isn't used as a reviewer in experiments.
   google-gemini-3.5-flash-lite:
     provider: google
     model: gemini-3.5-flash-lite
     temperature: 0
     max_tokens: 1024
     limits:  # free tier per AI Studio (2026-10-29): 15/min, 250K tokens/min, 500/day
+      requests_per_minute: 15
+      tokens_per_minute: 250000
+      requests_per_day: 500
+
+  # The SWR-Bench judge, fixed for the whole project (see results/judge-choice/). Settings are
+  # SWR-Bench's scorer defaults. It shares the model's daily quota with the profile above.
+  judge-gemini-3.5-flash-lite:
+    provider: google
+    model: gemini-3.5-flash-lite
+    temperature: 0
+    max_tokens: 8192
+    limits:
       requests_per_minute: 15
       tokens_per_minute: 250000
       requests_per_day: 500

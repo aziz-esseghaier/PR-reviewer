@@ -110,12 +110,14 @@ class IssueDiscussion(BaseModel):
         discussion_summary (str): SWR-Bench's summary of the issue. The judge compares
             review points with it.
         first_mention_timestamp (dt.datetime): When a reviewer first raised it.
+        original_reviewer_comment (str): The reviewer's own words when raising it.
     """
 
     model_config = ConfigDict(extra="ignore", frozen=True)
 
     discussion_summary: str
     first_mention_timestamp: dt.datetime
+    original_reviewer_comment: str
 
 
 class IssueFix(BaseModel):
