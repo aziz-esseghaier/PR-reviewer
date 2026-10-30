@@ -1,7 +1,11 @@
 """Measures the reviewer on SWR-Bench.
 
-Will hold the loader for the SWR-Bench PRs, the dev/test split (stratified by repo and year),
-scoring with SWR-Bench's official evaluation script, and the analysis of results.
+- source.py: where the SWR-Bench files come from (one pinned commit), with downloading and
+  fingerprint checks.
+- dataset.py: reads the PRs, checks each record, and picks the ones the benchmark uses.
 
-Empty for now; filled in a later milestone. Imported, not run.
+Still to come: the dev/test split, scoring with SWR-Bench's official evaluation script, and
+the analysis of results.
+
+Imported, not run.
 """

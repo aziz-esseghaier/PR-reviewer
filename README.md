@@ -104,6 +104,19 @@ LangSmith (smith.langchain.com) shows each run as a timeline: the graph's steps,
 
 A reply from the cache shows as a step marked `cached` with no tokens. A failed call shows its error. API keys are never sent. The free plan holds 5,000 traces a month, kept for 14 days, and one graph run is one trace. Tests never send traces.
 
+## Benchmark data (SWR-Bench)
+
+The benchmark is [SWR-Bench](https://github.com/ZZR0/SWRench): 1,000 real PRs from 12 Python repos, half with known issues (raised by the PR's real reviewers) and half clean. All its files come from one pinned commit of its repo, and each file is checked against a SHA-256 fingerprint before use, so the data can't change silently.
+
+```
+pr-reviewer bench download     # download the dataset (85 MB) into data/ (skipped when it's already there)
+pr-reviewer bench info         # count the benchmark's PRs by repo, year and kind
+```
+
+The benchmark uses the PRs from 2019 onward that are clean or have at least one functional (`F.*`) issue: 433 PRs, 140 with a functional issue and 293 clean. PRs whose issues are all evolvability (`E.*`) ones are left out.
+
+SWR-Bench's official scoring and review-generation scripts are copied unchanged into `third_party/swrbench/`, with SWR-Bench's MIT license. A test fails if they're edited.
+
 ## Checks
 
 ```

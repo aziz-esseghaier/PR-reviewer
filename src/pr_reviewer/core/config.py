@@ -1,11 +1,11 @@
 """Project settings: the .env file and the model config.
 
-Loads .env into the environment (API keys, database settings), finds and reads
-configs/models.yaml, and checks it with pydantic, so a typo, an unknown provider or a missing
-key fails at startup with a clear message. The config holds the providers (with the rule for
-when their daily quota resets) and the model profiles (with their per-minute and per-day
-limits). Error messages never repeat the values you typed, in case a key ended up in the wrong
-place. Also reads a provider's API key from the environment.
+Loads .env into the environment (API keys, database settings), finds the project folder, finds
+and reads configs/models.yaml, and checks it with pydantic, so a typo, an unknown provider or a
+missing key fails at startup with a clear message. The config holds the providers (with the
+rule for when their daily quota resets) and the model profiles (with their per-minute and
+per-day limits). Error messages never repeat the values you typed, in case a key ended up in the
+wrong place. Also reads a provider's API key from the environment.
 
 Imported by other modules; the file isn't run directly.
 """
@@ -69,6 +69,25 @@ def find_config(relative_path: Path) -> Path:
     raise ConfigError(
         f"Can't find {relative_path} here or in any parent folder. "
         "Run the command inside the project, or pass --config."
+    )
+
+
+def project_root() -> Path:
+    """Find the project folder: the nearest folder, from here up, that holds pyproject.toml.
+
+    Returns:
+        Path: The project folder.
+
+    Raises:
+        ConfigError: If no folder from here up to the drive root holds pyproject.toml.
+    """
+    here = Path.cwd()
+    for folder in (here, *here.parents):
+        if (folder / "pyproject.toml").is_file():
+            return folder
+    raise ConfigError(
+        "Can't find the project folder (no pyproject.toml here or in any parent folder). "
+        "Run the command inside the project."
     )
 
 

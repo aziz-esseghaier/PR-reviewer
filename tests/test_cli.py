@@ -15,8 +15,10 @@ import pytest
 from psycopg.conninfo import conninfo_to_dict
 
 from pr_reviewer import __version__
+from pr_reviewer.benchmark.source import DATASET, PinnedFile, sha256_of
 from pr_reviewer.cli import main
 from pr_reviewer.db.migrate import migrate
+from tests.benchmark.test_dataset import make_row, write_dataset
 
 MODELS_CONFIG = """
 providers:
@@ -100,6 +102,62 @@ def test_demo_unknown_profile_lists_known_ones(
     """Check that `demo` with a typo in the profile exits 1 before touching the database."""
     assert main(["demo", "fake-smal", "--config", str(models_config)]) == 1
     assert "fake-small" in capsys.readouterr().err
+
+
+@pytest.fixture
+def tiny_dataset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Write a five-PR dataset and pin the bench commands to its fingerprint.
+
+    Args:
+        tmp_path (Path): Temporary folder for this test.
+        monkeypatch (pytest.MonkeyPatch): Used to swap the pinned dataset for this test only.
+
+    Returns:
+        Path: The dataset file.
+    """
+    rows = [
+        make_row(1, year=2018),
+        make_row(2, year=2019),
+        make_row(3, year=2019, issues=("E.3.2 Solution Approach",)),
+        make_row(4, year=2020, issues=(), repo="pallets/flask"),
+        make_row(5, year=2021, issues=("E.2 Visual Representation", "F.4 Check")),
+    ]
+    path = write_dataset(tmp_path, rows)
+    pinned = PinnedFile(DATASET.path, sha256_of(path), path.stat().st_size)
+    monkeypatch.setattr("pr_reviewer.cli.DATASET", pinned)
+    return path
+
+
+def test_bench_info_counts_the_benchmark_prs(
+    tiny_dataset: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Check the summary and the per-repo and per-year tables of `bench info`."""
+    assert main(["bench", "info", "--data", str(tiny_dataset)]) == 0
+    out = capsys.readouterr().out
+    assert "All PRs:       5 (4 with known issues)" in out
+    assert "Benchmark PRs: 3 from 2019 onward" in out
+    assert "2 with a functional issue (1 also have evolvability issues)" in out
+    assert "Known issues in them: 2 functional, 1 evolvability" in out
+    assert "Left out: 1 PRs from before 2019, and 1 from 2019 onward" in out
+    assert "pallets/flask           0      1      1" in out
+    assert "2019              1      0      1" in out
+    assert "unchanged copies in third_party/swrbench/" in out
+
+
+def test_bench_info_without_the_file_says_how_to_download(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Check that a missing dataset exits 1 with the download command."""
+    assert main(["bench", "info", "--data", str(tmp_path / "none.jsonl")]) == 1
+    assert "pr-reviewer bench download" in capsys.readouterr().err
+
+
+def test_bench_download_skips_a_file_already_there(
+    tiny_dataset: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Check that `bench download` sends nothing when the pinned file is already there."""
+    assert main(["bench", "download", "--data", str(tiny_dataset)]) == 0
+    assert "Already downloaded" in capsys.readouterr().out
 
 
 @pytest.mark.integration

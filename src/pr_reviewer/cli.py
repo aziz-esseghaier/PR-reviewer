@@ -16,6 +16,8 @@ How to run (inside the conda env, from the project folder):
     pr-reviewer usage                         show daily quota use and requests per day
     pr-reviewer demo <profile>                run the demo LangGraph graph (--thread to resume,
                                               --sample N for fresh answers)
+    pr-reviewer bench download                download the pinned SWR-Bench dataset into data/
+    pr-reviewer bench info                    count the benchmark's PRs by repo, year and kind
 `python -m pr_reviewer.cli ...` works the same way.
 """
 
@@ -23,6 +25,7 @@ import argparse
 import logging
 import os
 import sys
+from collections import Counter
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -31,6 +34,17 @@ import openai
 import psycopg
 
 from pr_reviewer import __version__
+from pr_reviewer.benchmark.dataset import FIRST_YEAR, Instance, load_dataset, select_prs
+from pr_reviewer.benchmark.source import (
+    DATASET,
+    SOURCE_COMMIT,
+    SOURCE_REPO,
+    DatasetError,
+    check_official_files,
+    default_dataset_path,
+    download,
+    matches_pin,
+)
 from pr_reviewer.core.cache import PostgresCache, cache_stats
 from pr_reviewer.core.config import (
     ConfigError,
@@ -366,6 +380,85 @@ def _demo(args: argparse.Namespace) -> int:
     return 0
 
 
+def _bench_download(args: argparse.Namespace) -> int:
+    """Download the pinned SWR-Bench dataset, unless it's already there.
+
+    Args:
+        args (argparse.Namespace): Parsed arguments. Uses `data`.
+
+    Returns:
+        int: Exit code, 0 on success.
+    """
+    path: Path = args.data or default_dataset_path()
+    if matches_pin(DATASET, path):
+        print(f"Already downloaded: {path} (fingerprint matches)")
+        return 0
+    if path.exists():
+        print(f"{path} isn't the pinned version, so it will be replaced.")
+    size_mb = DATASET.size / 1_000_000
+    source = f"{SOURCE_REPO} at {SOURCE_COMMIT[:7]}"
+    print(f"Downloading {DATASET.name} ({size_mb:.0f} MB) from {source}")
+    download(DATASET, path)
+    print(f"Saved to {path} (fingerprint matches)")
+    return 0
+
+
+def _print_counts(title: str, prs: Sequence[Instance], key: Callable[[Instance], str]) -> None:
+    """Print a table of functional and clean PRs per group, such as per repo or per year.
+
+    Args:
+        title (str): Header of the first column, such as "By repo".
+        prs (Sequence[Instance]): The PRs to count.
+        key (Callable[[Instance], str]): Gives the group of a PR, such as its repo.
+    """
+    counts = Counter((key(pr), pr.group) for pr in prs)
+    rows = sorted({key(pr) for pr in prs})
+    width = max(len(title), *(len(row) for row in rows))
+    print(f"\n{title:<{width}}  FUNCTIONAL  CLEAN  TOTAL")
+    for row in rows:
+        functional, clean = counts[row, "functional"], counts[row, "clean"]
+        print(f"{row:<{width}}  {functional:>10}  {clean:>5}  {functional + clean:>5}")
+
+
+def _bench_info(args: argparse.Namespace) -> int:
+    """Print where the benchmark data comes from and how its PRs break down.
+
+    Args:
+        args (argparse.Namespace): Parsed arguments. Uses `data`.
+
+    Returns:
+        int: Exit code, 0 on success.
+    """
+    path: Path = args.data or default_dataset_path()
+    instances = load_dataset(path, sha256=DATASET.sha256)
+    prs = select_prs(instances)
+    with_issues = sum(instance.change_introduced for instance in instances)
+    functional = [pr for pr in prs if pr.group == "functional"]
+    mixed = sum(any(not issue.is_functional for issue in pr.changes) for pr in functional)
+    issues = Counter(issue.is_functional for pr in functional for issue in pr.changes)
+    older = sum(instance.year < FIRST_YEAR for instance in instances)
+    only_e = sum(
+        instance.year >= FIRST_YEAR and instance.group == "evolvability" for instance in instances
+    )
+    problems = check_official_files()
+
+    print(f"Dataset:       {path}")
+    print(f"Version:       {SOURCE_REPO} at {SOURCE_COMMIT[:7]} (fingerprint matches)")
+    print(f"Scorer files:  {'; '.join(problems) or 'unchanged copies in third_party/swrbench/'}")
+    print(f"All PRs:       {len(instances)} ({with_issues} with known issues)")
+    print(f"\nBenchmark PRs: {len(prs)} from {FIRST_YEAR} onward, clean or with a functional issue")
+    print(f"  {len(functional)} with a functional issue ({mixed} also have evolvability issues)")
+    print(f"  {len(prs) - len(functional)} clean")
+    print(f"  Known issues in them: {issues[True]} functional, {issues[False]} evolvability")
+    print(
+        f"Left out: {older} PRs from before {FIRST_YEAR}, and {only_e} from {FIRST_YEAR} "
+        "onward with evolvability issues only"
+    )
+    _print_counts("By repo", prs, lambda pr: pr.repo)
+    _print_counts("By year", prs, lambda pr: str(pr.year))
+    return 1 if problems else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser for the `pr-reviewer` command.
 
@@ -451,6 +544,22 @@ def build_parser() -> argparse.ArgumentParser:
         "thread, the thread's own number when resuming)",
     )
     demo.set_defaults(handler=_demo)
+
+    data_option = argparse.ArgumentParser(add_help=False)
+    data_option.add_argument(
+        "--data",
+        type=Path,
+        default=None,
+        help="SWR-Bench dataset file (default: data/swr_datasets_d5c5.jsonl in the project)",
+    )
+    bench = commands.add_parser("bench", help="download and inspect the SWR-Bench data")
+    bench_commands = bench.add_subparsers(metavar="BENCH_COMMAND", required=True)
+    bench_commands.add_parser(
+        "download", parents=[data_option], help="download the pinned SWR-Bench dataset into data/"
+    ).set_defaults(handler=_bench_download)
+    bench_commands.add_parser(
+        "info", parents=[data_option], help="count the benchmark's PRs by repo, year and kind"
+    ).set_defaults(handler=_bench_info)
     return parser
 
 
@@ -461,7 +570,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         argv (Sequence[str] | None): Arguments to parse. None means the real command line.
 
     Returns:
-        int: Exit code, 0 on success and 1 on a setup, database or LLM provider problem.
+        int: Exit code, 0 on success and 1 on a setup, database, LLM provider or benchmark
+        data problem.
     """
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -489,6 +599,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Stopped: {exc}", file=sys.stderr)
     except LLMError as exc:
         print(f"Unusable model reply: {exc}", file=sys.stderr)
+    except DatasetError as exc:
+        print(f"Benchmark data problem: {exc}", file=sys.stderr)
     finally:
         flush_traces()
     return 1
