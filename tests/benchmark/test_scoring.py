@@ -2,8 +2,8 @@
 Tests for scoring reviews in benchmark/scoring.py.
 
 Runs SWR-Bench's own scorer with a scripted fake judge, so no real provider is called. Checks
-reading and lining up the reviews file, the per-PR counts and that they add up to SWR-Bench's
-totals, a review with no points, and a PR the judge fails on.
+reading, writing and lining up the reviews file, the per-PR counts and that they add up to
+SWR-Bench's totals, a review with no points, and a PR the judge fails on.
 
 How to run (from the project folder):
     pytest tests/benchmark/test_scoring.py
@@ -23,6 +23,7 @@ from pr_reviewer.benchmark.scoring import (
     load_predictions,
     match_predictions,
     pr_score,
+    save_predictions,
     score_reviews,
 )
 from pr_reviewer.benchmark.source import DatasetError
@@ -176,6 +177,18 @@ def test_bad_predictions_file_names_the_line(
     """Check that a broken line or a second review of a PR is refused, naming the line."""
     with pytest.raises(DatasetError, match=message):
         load_predictions(write_predictions(tmp_path, lines))
+
+
+def test_saved_predictions_read_back_unchanged(tmp_path: Path) -> None:
+    """Check that a written file reads back the same, and writing again gives the same bytes."""
+    written = reviews("1. Uses “smart” quotes.\n2. Naïve loop.", "Fine.")
+    path = tmp_path / "out" / "reviews.jsonl"
+    save_predictions(path, written)
+    first = path.read_bytes()
+    save_predictions(path, written)
+    assert path.read_bytes() == first
+    assert b"\r\n" not in first
+    assert load_predictions(path) == written
 
 
 def test_reviews_are_lined_up_with_the_set() -> None:

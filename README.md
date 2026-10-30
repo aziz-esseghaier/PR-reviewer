@@ -155,6 +155,28 @@ Results go to `results/<name>/`: `config.json` (what was scored and how), `metri
 
 SWR-Bench's official scoring and review-generation scripts are copied unchanged into `third_party/swrbench/`, with SWR-Bench's MIT license. A test fails if they're edited.
 
+### Baselines
+
+Two sets of dev reviews written without a model give the score to beat and check the scoring:
+
+- **No comments** approves every PR, in the words SWR-Bench's review prompt asks for when nothing is found ("The pull request looks good and meets the standards.").
+- **Known issues** lists each PR's known issues, in SWR-Bench's own summary of each, and approves clean PRs. No review matches the answer key better, so a score below 1 here would point at the judge or the scoring.
+
+```
+python scripts/write_baseline_reviews.py      # writes data/baselines/no-comments.jsonl and known-issues.jsonl
+pr-reviewer score data/baselines/no-comments.jsonl --name baseline-no-comments --reviewer none
+pr-reviewer score data/baselines/known-issues.jsonl --name baseline-known-issues --reviewer none
+```
+
+Clean PRs get the same review in both, so the second run sends the judge only the 39 PRs with issues. Results on the dev set (130 PRs: 39 with 82 known issues, 91 clean):
+
+| Baseline | PR accuracy | Point precision | Point recall | Point F1 |
+|---|---|---|---|---|
+| No comments | 0.700 | 0.000 | 0.000 | 0.000 |
+| Known issues | 1.000 | 1.000 | 1.000 | 1.000 |
+
+Approving everything already gets 0.70 PR accuracy, because most PRs are clean. So compare reviewers on the point-level scores, not on accuracy.
+
 ## Checks
 
 ```

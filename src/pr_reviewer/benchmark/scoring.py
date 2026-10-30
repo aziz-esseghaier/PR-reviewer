@@ -1,7 +1,8 @@
 """Scoring a set of reviews with SWR-Bench's official scorer and the project's judge.
 
 A predictions file is JSONL with one review per PR, {"instance_id": ..., "review": ...}, the
-format SWR-Bench's own review generator writes. score_reviews() runs SWR-Bench's
+format SWR-Bench's own review generator writes (load_predictions() reads one,
+save_predictions() writes one). score_reviews() runs SWR-Bench's
 evaluate_one() on each PR, with the judge answering through our LLM client (benchmark/judge.py),
 then its analyze_result() for the metrics. Prompts, answer checks and formulas are all
 SWR-Bench's.
@@ -84,6 +85,23 @@ def load_predictions(path: Path) -> list[Prediction]:
             seen.add(prediction.instance_id)
             predictions.append(prediction)
     return predictions
+
+
+def save_predictions(path: Path, predictions: Sequence[Prediction]) -> None:
+    """Write reviews as a predictions file that load_predictions() reads.
+
+    The same reviews always give the same bytes, so the file's fingerprint stays the same when
+    it's written again.
+
+    Args:
+        path (Path): The JSONL file to write. Its folder is created if needed, and an existing
+            file is replaced.
+        predictions (Sequence[Prediction]): The reviews, one per PR, in the order to write.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="\n") as file:
+        for prediction in predictions:
+            file.write(prediction.model_dump_json() + "\n")
 
 
 def match_predictions(

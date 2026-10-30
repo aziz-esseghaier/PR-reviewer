@@ -662,7 +662,7 @@ def _score(args: argparse.Namespace) -> int:
                 f"{score.points} points: {score.hits} hits, {score.false_alarms} false alarms, "
                 f"{score.misses} misses"
             )
-        print(f"  [{position + 1}/{total}] {instance_id}: {outcome}")
+        print(f"  [{position + 1}/{total}] {instance_id}: {outcome}", flush=True)
 
     with connect() as conn:
         chat = JudgeChat(

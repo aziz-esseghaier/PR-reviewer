@@ -11,6 +11,8 @@
   LLM client.
 - scoring.py: scores one review per PR with SWR-Bench's scorer (`pr-reviewer score`).
 - results.py: keeps the scores, in results/<name>/ and in PostgreSQL.
+- baselines.py: reviews written without a model, to give the score to beat and check the
+  scoring.
 
 Still to come: the analysis of results across experiments.
 
