@@ -312,7 +312,7 @@ class ModelsConfig(BaseModel):
         return self.providers[name]
 
 
-def _describe_errors(exc: ValidationError) -> str:
+def describe_errors(exc: ValidationError) -> str:
     """Turn pydantic validation errors into short lines that don't repeat the bad values.
 
     Pydantic's own message includes each rejected value. A value could be an API key pasted
@@ -355,7 +355,7 @@ def load_models_config(path: Path | None = None) -> ModelsConfig:
     try:
         return ModelsConfig.model_validate(raw)
     except ValidationError as exc:
-        raise ConfigError(f"Problems in {path}:\n{_describe_errors(exc)}") from None
+        raise ConfigError(f"Problems in {path}:\n{describe_errors(exc)}") from None
 
 
 def read_api_key(provider: ProviderConfig) -> str:

@@ -177,11 +177,41 @@ Clean PRs get the same review in both, so the second run sends the judge only th
 
 Approving everything already gets 0.70 PR accuracy, because most PRs are clean. So compare reviewers on the point-level scores, not on accuracy.
 
+## Sandbox (Docker)
+
+PR code is untrusted, so it only ever runs inside Docker containers called sandboxes. Every sandbox:
+
+- has the limits set in `configs/sandbox.yaml`: 2 CPUs, 2 GB of memory with no swap, 512 processes, and a 2-hour lifetime, after which it stops itself even if the program that started it crashed. Each command also has a time limit: 30 minutes for installs, 15 for tests.
+- runs commands as a non-root user with no Linux privileges. It never sees your files, your `.env` settings or Docker itself.
+- starts with its network off: it has nothing but its own loopback interface, so even name lookups fail.
+
+When a step needs the network, such as installing packages, the sandbox joins an internal Docker network whose only way out is a proxy container. The proxy (tinyproxy, also locked down) forwards only to the hosts listed in `configs/sandbox.yaml`: GitHub, PyPI, Debian, conda-forge and python.org. So install code can't reach other sites, or services on this machine such as the database and pgAdmin. To allow another host, add it to `allowed_hosts`; the proxy restarts with the new list.
+
+The SWR-Bench repos are cloned once, inside Docker, into the Docker volume `pr-reviewer-repos`, never onto the Windows drive. Each PR's commits come from GitHub's `pull/<N>/head` refs, as SWR-Bench's own scripts get them. Sandboxes see these copies read-only and make their own working copy from one in seconds, so checkouts work with the network off.
+
+A PR has two sides:
+- **base**: the commit just before its first reviewed commit, which is what SWR-Bench's own scripts use. The dataset's `base_commit` field can be a different, later commit.
+- **PR state**: its last reviewed commit, the code the reviewer sees.
+
+```
+pr-reviewer sandbox build      # build the sandbox and proxy images (first time: about 11 minutes)
+pr-reviewer sandbox repos      # download the dev PRs' repos and commits (about 1.6 GB, once)
+pr-reviewer sandbox check      # check every dev PR's commits and both checkouts, with the network off
+pr-reviewer sandbox run <id> --at base -- git log -1    # run a command at a dev PR's base (or --at pr)
+pr-reviewer sandbox status     # images, proxy, repo copies and their sizes, leftover containers
+pr-reviewer sandbox cleanup    # remove sandbox containers left behind by a crash
+```
+
+`sandbox run` takes `--network` to turn the network on (through the proxy), and refuses test-set PRs. `sandbox check` writes `results/commit-check/` and the `pr_checkouts` table. For each dev PR, these record its base and PR state, whether both can be checked out, how the `base_commit` field relates to the base, and any merge commits. Each sandbox command's output is logged under `data/sandbox-logs/`.
+
+On the dev set, all 130 PRs can be checked out at both sides, with the network off. For 75 of them the `base_commit` field is the base itself. For the other 55 it's later on the main line: 7 commits after the base in the middle case, and up to 3,317. Testing from that field would mix other people's changes into the PR's, which is why the base is taken from git instead.
+
 ## Checks
 
 ```
-pytest                        # integration tests are skipped when the database isn't running
-pytest -m "not integration"   # unit tests only
+pytest                        # integration and docker tests are skipped when the database or Docker isn't running
+pytest -m "not integration and not docker"   # unit tests only
+pytest -m docker              # the sandbox tests (need the images built; a few need internet)
 ruff check .
 mypy
 ```

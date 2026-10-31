@@ -26,6 +26,7 @@ dependencies = [
     "numpy>=2.0",
     "tqdm>=4.66",
     "loguru>=0.7",
+    "docker>=7.2",  # Docker SDK: runs the sandbox containers that hold PR code
 ]
 
 [project.optional-dependencies]
@@ -34,6 +35,7 @@ dev = [
     "ruff>=0.8",
     "mypy>=1.13",
     "types-PyYAML",  # type hints for pyyaml, used by mypy
+    "types-docker",  # type hints for the Docker SDK, used by mypy
 ]
 
 [project.scripts]
@@ -54,6 +56,10 @@ extend-exclude = ["third_party"]
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 
+[tool.ruff.lint.isort]
+# The Docker SDK, not our docker/ folder of Dockerfiles.
+known-third-party = ["docker"]
+
 [tool.mypy]
 python_version = "3.12"
 strict = true
@@ -66,4 +72,5 @@ testpaths = ["tests"]
 addopts = "-ra"
 markers = [
     "integration: needs the PostgreSQL container from docker-compose.yml (skipped when it is not running)",
+    "docker: starts sandbox containers, so needs Docker (skipped when it is not running)",
 ]

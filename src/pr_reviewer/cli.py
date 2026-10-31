@@ -23,6 +23,11 @@ How to run (inside the conda env, from the project folder):
     pr-reviewer score <reviews.jsonl> --name <experiment> --reviewer <model or none>
                                               score one review per dev PR with SWR-Bench's
                                               scorer and the judge; results go to results/<name>/
+    pr-reviewer sandbox build | repos | check | status | cleanup
+                                              build the sandbox images, download the dev PRs'
+                                              repos, check their checkouts, show or clean up
+    pr-reviewer sandbox run <instance_id> --at base|pr -- <command>
+                                              run a command in a sandbox at a dev PR's commit
 `python -m pr_reviewer.cli ...` works the same way.
 """
 
@@ -122,6 +127,9 @@ from pr_reviewer.db.checkpoints import open_checkpointer, setup_checkpoints
 from pr_reviewer.db.connection import connect, extension_version, server_version, table_exists
 from pr_reviewer.db.migrate import applied_migrations, discover_migrations, migrate
 from pr_reviewer.demo_graph import STATE_TYPES, DemoResult, new_thread_id, run_demo
+from pr_reviewer.sandbox.commands import add_commands as add_sandbox_commands
+from pr_reviewer.sandbox.image import ImageError
+from pr_reviewer.sandbox.runner import SandboxError
 
 Handler = Callable[[argparse.Namespace], int]
 
@@ -840,6 +848,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="allow --split test; only for the final test-set run",
     )
     score.set_defaults(handler=_score)
+
+    add_sandbox_commands(commands, data_option)
     return parser
 
 
@@ -884,6 +894,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Refused: {exc}", file=sys.stderr)
     except DatasetError as exc:
         print(f"Benchmark data problem: {exc}", file=sys.stderr)
+    except (SandboxError, ImageError) as exc:
+        print(f"Sandbox problem: {exc}", file=sys.stderr)
     finally:
         flush_traces()
     return 1

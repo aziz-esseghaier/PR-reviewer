@@ -1,0 +1,39 @@
+# Settings of the Docker sandboxes that hold PR code. PR code is untrusted, so it only ever runs
+# inside these containers. Read by src/pr_reviewer/sandbox/config.py.
+
+# Docker objects the sandboxes use. They are created when first needed.
+image: pr-reviewer-sandbox        # built from docker/sandbox/Dockerfile (pr-reviewer sandbox build)
+network: pr-reviewer-sandbox      # internal network a sandbox joins only while its network is on;
+                                  # it has no route anywhere except to the proxy
+repos_volume: pr-reviewer-repos   # one shared git copy per repo, read-only inside sandboxes
+
+# The proxy: the only way out of a sandbox whose network is on. It forwards only to the hosts
+# below, so install code can't reach this machine (the database, pgAdmin) or any other site.
+proxy:
+  image: pr-reviewer-proxy        # built from docker/proxy/Dockerfile
+  container: pr-reviewer-proxy
+  egress_network: pr-reviewer-egress   # ordinary network the proxy (only) uses to go out
+  port: 8888
+  allowed_hosts:                  # exact host names; add one when an install needs it
+    - github.com                  # git clone and fetch
+    - codeload.github.com         # source archives
+    - objects.githubusercontent.com          # release downloads
+    - release-assets.githubusercontent.com   # release downloads
+    - pypi.org                    # pip: package index
+    - files.pythonhosted.org      # pip: package files
+    - deb.debian.org              # apt: Debian packages
+    - conda.anaconda.org          # conda-forge packages
+    - www.python.org              # Python source releases
+
+# Limits of every sandbox container.
+limits:
+  cpus: 2
+  memory_gb: 2            # no swap on top, so a program that needs more is stopped
+  processes: 512
+  lifetime_minutes: 120   # the container stops itself after this, even if our program crashes
+
+# Time limit of one command inside a sandbox, in minutes.
+timeouts:
+  install_minutes: 30     # installing a repo and its dependencies (network on)
+  test_minutes: 15        # running tests or a check (network off)
+  download_minutes: 60    # downloading a repo's shared copy from GitHub

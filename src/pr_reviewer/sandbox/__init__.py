@@ -1,8 +1,16 @@
 """Runs untrusted PR code safely inside Docker containers.
 
-Will hold the Docker runner (CPU, memory and time limits, network off while tests run), the
-git checkout of a repo at a given commit, and the differential test runner: a test that passes
-on the base commit and fails on the PR commit is the strongest evidence a finding can have.
+- config.py: the sandbox settings in configs/sandbox.yaml (limits, time limits, Docker names).
+- image.py: builds the sandbox image from docker/sandbox/Dockerfile.
+- runner.py: one sandbox container, with CPU, memory, process and time limits, no privileges,
+  and a network switch that starts off.
+- repos.py: one shared git copy of each repo in a Docker volume, read-only in sandboxes.
+- checkout.py: puts a sandbox's working copy at a PR's base or PR state.
+- commit_check.py: checks that every dev PR can be checked out on both sides, offline.
+- commands.py: the `pr-reviewer sandbox ...` commands.
 
-Empty for now; filled in a later milestone. Imported, not run.
+Still to come: the differential test runner, where a test that passes on the base and fails
+on the PR state is the strongest evidence a finding can have.
+
+Imported, not run.
 """
