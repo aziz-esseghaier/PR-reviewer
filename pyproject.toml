@@ -27,6 +27,7 @@ dependencies = [
     "tqdm>=4.66",
     "loguru>=0.7",
     "docker>=7.2",  # Docker SDK: runs the sandbox containers that hold PR code
+    "packaging>=24",  # reads Python version requirements, such as ">=3.8"
 ]
 
 [project.optional-dependencies]

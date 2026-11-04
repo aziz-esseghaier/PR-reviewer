@@ -47,8 +47,6 @@ CLAIM: dict[str, Any] = {
 RECIPE: dict[str, Any] = {
     "repo": "psf/requests",
     "python_version": "3.11",
-    "base_image": "python:3.11-slim",
-    "system_packages": ["git"],
     "install_steps": ["pip install -e .", "pip install pytest"],
     "test_command": "python -m pytest -q",
 }
@@ -316,8 +314,8 @@ def test_review_has_one_numbered_point_per_finding() -> None:
 def test_recipe_is_verified_only_by_passing_tests() -> None:
     """Check that a recipe without checks, or whose tests mostly fail, isn't verified."""
     assert not EnvRecipe.model_validate(RECIPE).verified
-    weak = EnvRecipe.model_validate({**RECIPE, "checks": [check(passed=50, failed=50)]})
-    assert not weak.verified
+    weak = EnvRecipe.model_validate({**RECIPE, "checks": [check(passed=85, failed=15)]})
+    assert not weak.verified, "under 90% passing doesn't count"
     empty = EnvRecipe.model_validate({**RECIPE, "checks": [check(passed=0, failed=0)]})
     assert not empty.verified
     good = EnvRecipe.model_validate({**RECIPE, "checks": [check()]})
@@ -343,9 +341,7 @@ def test_recipe_period_spans_the_passing_checks() -> None:
 @pytest.mark.parametrize(
     ("key", "value"),
     [
-        ("system_packages", ["curl; rm -rf /"]),
         ("env", {"BAD NAME": "x"}),
-        ("base_image", "python:3.11 && curl evil.example"),
         ("repo", "requests"),
         ("python_version", "python3"),
         ("install_steps", []),

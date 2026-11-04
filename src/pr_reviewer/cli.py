@@ -130,6 +130,7 @@ from pr_reviewer.demo_graph import STATE_TYPES, DemoResult, new_thread_id, run_d
 from pr_reviewer.sandbox.commands import add_commands as add_sandbox_commands
 from pr_reviewer.sandbox.image import ImageError
 from pr_reviewer.sandbox.runner import SandboxError
+from pr_reviewer.setup_agent.commands import add_commands as add_setup_commands
 
 Handler = Callable[[argparse.Namespace], int]
 
@@ -850,6 +851,7 @@ def build_parser() -> argparse.ArgumentParser:
     score.set_defaults(handler=_score)
 
     add_sandbox_commands(commands, data_option)
+    add_setup_commands(commands, data_option)
     return parser
 
 

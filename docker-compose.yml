@@ -8,6 +8,11 @@ services:
   postgres:
     # Official Postgres 18 image with the pgvector extension installed, pinned to pgvector 0.8.7.
     image: pgvector/pgvector:0.8.7-pg18
+    # Docker's small init program runs as the container's first process and cleans up leftover
+    # processes. Without it Postgres is that process: it adopts a healthcheck left behind after a
+    # timeout, and when that exits with an error, Postgres takes it for a crashed server process
+    # and drops every connection.
+    init: true
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}

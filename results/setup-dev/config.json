@@ -1,0 +1,30 @@
+{
+  "name": "setup-dev",
+  "date": "2026-11-04",
+  "split": "dev",
+  "since": 2022,
+  "agent_model": "setup-gpt-oss-120b",
+  "agent_model_id": "openai/gpt-oss-120b",
+  "budget": {
+    "model_calls": 12,
+    "minutes": 60.0
+  },
+  "min_pass_rate": 0.9,
+  "sandbox_limits": {
+    "cpus": 2.0,
+    "memory_gb": 2.0,
+    "processes": 512,
+    "lifetime_minutes": 120.0
+  },
+  "allowed_hosts": [
+    "github.com",
+    "codeload.github.com",
+    "objects.githubusercontent.com",
+    "release-assets.githubusercontent.com",
+    "pypi.org",
+    "files.pythonhosted.org",
+    "deb.debian.org",
+    "conda.anaconda.org",
+    "www.python.org"
+  ]
+}

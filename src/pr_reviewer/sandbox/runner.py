@@ -3,7 +3,8 @@
 A Sandbox is one Docker container started from the sandbox image (sandbox/image.py). Every one
 gets:
 - the limits from configs/sandbox.yaml: CPUs, memory with no swap, processes, and a lifetime
-  after which the container stops itself, even if our program crashed;
+  after which the container stops itself, even if our program crashed. The container is also
+  pinned to that many CPUs, so programs inside see only those (pinned_cpus());
 - no Linux privileges: all capabilities dropped, no gaining privileges through setuid
   programs, and commands run as the non-root user "sandbox";
 - nothing from this machine: no Windows folders, no Docker socket, no settings from .env. The
@@ -24,6 +25,7 @@ Imported by other modules; the file isn't run directly.
 
 import contextlib
 import io
+import math
 import shlex
 import tarfile
 import threading
@@ -42,6 +44,10 @@ from docker.models.networks import Network
 
 from pr_reviewer.sandbox.config import LABEL, Limits, SandboxConfig
 from pr_reviewer.sandbox.proxy import ensure_network, proxy_environment
+
+# What a failed Docker call raises: the SDK's own errors, or, when a call goes over the
+# client's time limit or loses its connection, the requests library's, which are OSErrors.
+DOCKER_ERRORS = (docker.errors.DockerException, OSError)
 
 # The user commands run as: "sandbox" in the image, not root.
 USER = "1000:1000"
@@ -64,6 +70,9 @@ OUTPUT_LIMIT = 1_000_000
 
 # The kernel counts memory kills here (cgroup v2, seen from inside the container).
 MEMORY_EVENTS = "/sys/fs/cgroup/memory.events"
+
+# Seconds a call to Docker (other than a command's output) may take.
+DOCKER_TIMEOUT = 600
 
 
 class SandboxError(Exception):
@@ -121,9 +130,11 @@ def docker_client() -> DockerClient:
         SandboxError: If Docker isn't running or can't be reached.
     """
     try:
-        client = docker.from_env()
+        # Saving or removing a big sandbox can take minutes on a slow disk; the SDK's default
+        # 60 seconds isn't enough. Command output streams don't use this limit.
+        client = docker.from_env(timeout=DOCKER_TIMEOUT)
         client.ping()
-    except docker.errors.DockerException as exc:
+    except DOCKER_ERRORS as exc:
         raise SandboxError(f"Can't reach Docker ({exc}). Is Docker Desktop running?") from None
     return client
 
@@ -231,6 +242,25 @@ def _tar(files: Mapping[str, bytes | str]) -> bytes:
     return buffer.getvalue()
 
 
+def pinned_cpus(machine_cpus: int, limit: float) -> str:
+    """Choose the CPUs a sandbox runs on: the machine's last ones, as many as its CPU limit.
+
+    A CPU limit alone still shows every CPU of the machine to the programs inside. Build tools
+    such as ninja and make then start a compile job per CPU, and together the jobs run out of
+    memory (10 jobs in 2 GB on an 8-CPU machine). Pinned, `nproc` shows only the sandbox's
+    CPUs. The last ones are used, since the first does most of the system's own work.
+
+    Args:
+        machine_cpus (int): CPUs of the machine Docker runs on (its VM, with Docker Desktop).
+        limit (float): The sandbox's CPU limit, which may be a fraction, such as 1.5.
+
+    Returns:
+        str: The CPU numbers in Docker's format, such as "6,7".
+    """
+    count = max(1, min(machine_cpus, math.ceil(limit)))
+    return ",".join(str(cpu) for cpu in range(machine_cpus - count, machine_cpus))
+
+
 class Sandbox:
     """One sandbox container: create it, run commands in it, switch its network, remove it.
 
@@ -323,6 +353,7 @@ class Sandbox:
                 # Tools reach the internet only through the proxy, and only while online.
                 environment=proxy_environment(self._config),
                 nano_cpus=round(limits.cpus * 1e9),
+                cpuset_cpus=pinned_cpus(self._client.info()["NCPU"], limits.cpus),
                 mem_limit=memory,
                 memswap_limit=memory,
                 pids_limit=limits.processes,
@@ -337,21 +368,32 @@ class Sandbox:
             if not self._start_online:
                 self.set_network(False)
             self._memory_kills = self._read_memory_kills()
-        except docker.errors.DockerException as exc:
-            self.close()
+        except DOCKER_ERRORS as exc:
+            with contextlib.suppress(SandboxError):
+                self.close()
             raise SandboxError(f"Can't start a sandbox from {self._image}: {exc}") from None
         except SandboxError:
-            self.close()
+            with contextlib.suppress(SandboxError):
+                self.close()
             raise
         if self.log_dir is not None:
             self.log_dir.mkdir(parents=True, exist_ok=True)
 
     def close(self) -> None:
-        """Remove the container and everything in it. Safe to call more than once."""
+        """Remove the container and everything in it. Safe to call more than once.
+
+        Raises:
+            SandboxError: If Docker can't remove it. It then stops at the end of its lifetime,
+                and the next run's remove_leftovers() removes it.
+        """
         if self._container is not None:
-            with contextlib.suppress(docker.errors.NotFound):
-                self._container.remove(force=True)
-            self._container = None
+            container, self._container = self._container, None
+            try:
+                container.remove(force=True)
+            except docker.errors.NotFound:
+                pass
+            except DOCKER_ERRORS as exc:
+                raise SandboxError(f"Can't remove the sandbox {self.name}: {exc}") from None
 
     def set_network(self, on: bool) -> None:
         """Turn the network on or off.
@@ -371,7 +413,7 @@ class Sandbox:
                 network.connect(container)
             else:
                 network.disconnect(container, force=True)
-        except docker.errors.DockerException as exc:
+        except DOCKER_ERRORS as exc:
             raise SandboxError(f"Can't turn the network {'on' if on else 'off'}: {exc}") from None
         self._online = on
 
@@ -382,6 +424,7 @@ class Sandbox:
         timeout: float,
         label: str = "",
         workdir: str | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> RunResult:
         """Run one command in the sandbox and wait for it, within a time limit.
 
@@ -393,6 +436,7 @@ class Sandbox:
             timeout (float): Seconds it may run before it's stopped.
             label (str): A short word for the log file's name, such as "checkout".
             workdir (str | None): Folder inside the sandbox to run it in. None means /work.
+            env (Mapping[str, str] | None): Extra environment variables for this command.
 
         Returns:
             RunResult: Exit code, output, time, and whether it ran out of time or memory.
@@ -411,13 +455,23 @@ class Sandbox:
             log_path = self.log_dir / name
         started = time.monotonic()
         api = self._client.api
-        exec_id = api.exec_create(
-            container.id, wrapped, stdout=True, stderr=True, user=USER, workdir=workdir
-        )["Id"]
+        try:
+            exec_id = api.exec_create(
+                container.id,
+                wrapped,
+                stdout=True,
+                stderr=True,
+                user=USER,
+                workdir=workdir,
+                environment=dict(env) if env else None,
+            )["Id"]
+            stream = api.exec_start(exec_id, stream=True)
+        except DOCKER_ERRORS as exc:
+            raise SandboxError(f"Can't run {shlex.join(command)}: {exc}") from None
         output = bytearray()
         reader = threading.Thread(
             target=self._collect,
-            args=(api.exec_start(exec_id, stream=True), output, log_path, command, timeout),
+            args=(stream, output, log_path, command, timeout),
             daemon=True,
         )
         reader.start()
@@ -429,8 +483,11 @@ class Sandbox:
                 "the sandbox was stopped"
             )
         seconds = time.monotonic() - started
-        exit_code = int(api.exec_inspect(exec_id)["ExitCode"])
-        kills = self._read_memory_kills()
+        try:
+            exit_code = int(api.exec_inspect(exec_id)["ExitCode"])
+            kills = self._read_memory_kills()
+        except DOCKER_ERRORS as exc:
+            raise SandboxError(f"Can't tell how {shlex.join(command)} ended: {exc}") from None
         out_of_memory = kills > self._memory_kills
         self._memory_kills = kills
         timed_out = not out_of_memory and (
@@ -450,6 +507,34 @@ class Sandbox:
                 log.write(f"\n[{result.describe()}]\n")
         return result
 
+    def save_image(self, repository: str, tag: str, labels: Mapping[str, str]) -> str:
+        """Save the sandbox's current files as a new image, to start later sandboxes from.
+
+        The repo volume isn't part of it (volumes never are), and the network state isn't
+        either: a sandbox started from the image begins with the network off, like any other.
+        The sandbox isn't paused while it's saved, so nothing should be running in it then.
+
+        Args:
+            repository (str): The image name, such as "pr-reviewer-env".
+            tag (str): The image tag.
+            labels (Mapping[str, str]): Labels to put on the image.
+
+        Returns:
+            str: The image name and tag.
+
+        Raises:
+            SandboxError: If Docker can't save it, or takes too long.
+        """
+        container = self._live()
+        changes = [f"LABEL {key}={value}" for key, value in labels.items()]
+        try:
+            # Docker once stayed stuck for ten minutes saving a paused sandbox, and pausing an
+            # idle one protects nothing.
+            container.commit(repository=repository, tag=tag, changes=changes, pause=False)
+        except DOCKER_ERRORS as exc:
+            raise SandboxError(f"Can't save {self.name} as an image: {exc}") from None
+        return f"{repository}:{tag}"
+
     def write_files(self, folder: str, files: Mapping[str, bytes | str]) -> None:
         """Put files into the sandbox, owned by the sandbox user.
 
@@ -462,7 +547,7 @@ class Sandbox:
         """
         try:
             ok = self._live().put_archive(folder, _tar(files))
-        except docker.errors.DockerException as exc:
+        except DOCKER_ERRORS as exc:
             raise SandboxError(f"Can't write files to {folder}: {exc}") from None
         if not ok:
             raise SandboxError(f"Can't write files to {folder}")
@@ -478,7 +563,10 @@ class Sandbox:
         """
         if self._container is None:
             raise SandboxError("The sandbox is closed")
-        self._container.reload()
+        try:
+            self._container.reload()
+        except DOCKER_ERRORS as exc:
+            raise SandboxError(f"Can't reach the sandbox {self.name}: {exc}") from None
         if self._container.status != "running":
             raise SandboxError(
                 f"The sandbox {self.name} has stopped ({self._container.status}); it may have "

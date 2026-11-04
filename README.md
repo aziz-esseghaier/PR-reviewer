@@ -206,6 +206,45 @@ pr-reviewer sandbox cleanup    # remove sandbox containers left behind by a cras
 
 On the dev set, all 130 PRs can be checked out at both sides, with the network off. For 75 of them the `base_commit` field is the base itself. For the other 55 it's later on the main line: 7 commits after the base in the middle case, and up to 3,317. Testing from that field would mix other people's changes into the PR's, which is why the base is taken from git instead.
 
+## Environment setup (the setup agent)
+
+To test a PR, its repo must be installed as it was at the time. The setup agent builds that environment for each dev PR. Only the repo's own tests decide whether it works, never the agent.
+
+1. It reads the repo's setup files at the PR's base, such as `setup.py`, `pyproject.toml`, the CI configs and the requirement files.
+2. It picks the existing tests related to the PR: test files the PR edits, or ones named after the modules it changes, at most 5 files.
+3. It tries, in order:
+   - a recipe that worked for an earlier PR of the same repo and year, or the nearest year
+   - the standard recipe: the right Python, the repo in editable mode with its test extra and requirements, and pytest
+   - recipes from the setup agent's model (`setup-gpt-oss-120b`), which reads the repo's facts and each failed attempt's log, and may ask to read files first
+
+   The budget is 12 model calls and 60 minutes per PR. A setup that runs out gives up and records why, in a category named from the logs.
+4. Each attempt runs in a fresh sandbox:
+   - **Base:** install with the network on (through the proxy), then run the related tests with the network off.
+   - **PR state:** switch to it, reinstall, and run the same tests again.
+
+   The environment is verified when at least 90% of those tests pass both times. It's then saved as a Docker image (`pr-reviewer-env:...`), so later PRs with the same recipe start from it.
+
+Packages are pinned to the PR's date (`UV_EXCLUDE_NEWER`), so an old commit gets the libraries of its time. The one exception: for PRs before September 2022, setuptools may be as new as September 2022, the first versions that can do editable installs. uv installs Python 3.8 and newer; Python 3.7, for 2019 and 2020 PRs, is built into the sandbox image from python.org's source. The image also holds a fixed set of compilers and libraries; recipes can't install system packages.
+
+Progress is saved in PostgreSQL after each step, so a setup stopped by the model's daily limit continues where it stopped. The free tier allows about 35 model calls a day.
+
+```
+pr-reviewer setup run                  # set up the dev PRs from 2022 onward not set up yet
+pr-reviewer setup run --since 2019     # also the older ones
+pr-reviewer setup run --ids <id> ...   # only these PRs (--again to start them over)
+pr-reviewer setup report               # write results/setup-dev/ for the dev PRs from 2022 onward
+pr-reviewer setup report --since 2019  # the same, with the older ones
+```
+
+`setup report` writes `results/setup-dev/`:
+- `summary.md`: success rates by repo and year, what got environments working, and why setups failed
+- `usable_prs.json`: the fixed usable subset, the verified dev PRs that later experiments run on
+- `config.json`: how the setups ran
+
+Recipes are kept in the `env_recipes` table, and every setup in `setup_runs`.
+
+On the dev set, all 68 PRs from 2022 onward are verified, in 9 repos: 51 with a recipe kept from an earlier PR, 14 with the standard recipe, and 3 with the model's recipes (14 model calls). The 62 dev PRs from 2019–2021 aren't set up yet.
+
 ## Checks
 
 ```

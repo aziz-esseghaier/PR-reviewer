@@ -3,11 +3,12 @@ Tests for the sandbox containers in sandbox/runner.py.
 
 The first tests need nothing. The ones marked `docker` start real sandboxes with small limits
 and prove each protection: commands run as a user without privileges; the CPU, memory and
-process limits are set; a command over its time limit is stopped; a program that uses too
-much memory is killed and reported; the network is off until switched on, and on means the
-proxy only (that part needs an internet connection); the repo volume is read-only; and a
-sandbox stops at the end of its lifetime. They're skipped when Docker isn't running or the
-images aren't built. tests/sandbox/test_proxy.py checks what the proxy lets through.
+process limits are set, and programs see only the sandbox's CPUs; a command over its time
+limit is stopped; a program that uses too much memory is killed and reported; the network is
+off until switched on, and on means the proxy only (that part needs an internet connection);
+the repo volume is read-only; a Docker call that times out is a SandboxError; and a sandbox
+stops at the end of its lifetime. They're skipped when Docker isn't running or the images
+aren't built. tests/sandbox/test_proxy.py checks what the proxy lets through.
 
 How to run (from the project folder):
     pytest tests/sandbox/test_runner.py
@@ -19,7 +20,9 @@ import time
 from pathlib import Path
 
 import pytest
+import requests
 from docker import DockerClient
+from docker.models.containers import Container
 
 from pr_reviewer.sandbox.config import SandboxConfig
 from pr_reviewer.sandbox.runner import (
@@ -29,6 +32,7 @@ from pr_reviewer.sandbox.runner import (
     _tar,
     can_reach,
     fetch,
+    pinned_cpus,
     remove_leftovers,
 )
 from tests.sandbox.conftest import TEST_LIMITS, TEST_PREFIX
@@ -68,6 +72,14 @@ def test_files_are_packed_for_the_sandbox_user() -> None:
     assert members["a.txt"].size == 2
 
 
+def test_sandboxes_are_pinned_to_the_last_cpus() -> None:
+    """Check the CPUs chosen: as many as the limit (a fraction rounds up), the last ones."""
+    assert pinned_cpus(8, 2) == "6,7"
+    assert pinned_cpus(8, 1.5) == "6,7"
+    assert pinned_cpus(4, 1) == "3"
+    assert pinned_cpus(2, 4) == "0,1"
+
+
 @pytest.mark.docker
 def test_commands_run_as_a_user_without_privileges(sandbox: Sandbox) -> None:
     """Check the user is uid 1000 and holds no Linux capabilities."""
@@ -84,6 +96,7 @@ def test_cpu_memory_and_process_limits_are_set(sandbox: Sandbox) -> None:
         return sandbox.run(["cat", f"/sys/fs/cgroup/{name}"], timeout=30).output.strip()
 
     assert read("cpu.max") == "100000 100000"
+    assert sandbox.run(["nproc"], timeout=30).output.strip() == "1"
     assert read("memory.max") == str(256 * 1024 * 1024)
     assert read("memory.swap.max") == "0"
     assert read("pids.max") == str(TEST_LIMITS.processes)
@@ -151,6 +164,24 @@ def test_written_files_belong_to_the_sandbox_user(sandbox: Sandbox) -> None:
     assert sandbox.run(["stat", "-c", "%U", "/work/note.txt"], timeout=30).output.strip() == (
         "sandbox"
     )
+
+
+@pytest.mark.docker
+def test_a_docker_timeout_is_a_sandbox_error(
+    sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Check a Docker call that times out is reported as a SandboxError, not a crash.
+
+    When Docker doesn't answer in time, its SDK raises the requests library's ReadTimeout,
+    which isn't one of the SDK's own errors.
+    """
+
+    def stuck(*args: object, **kwargs: object) -> None:
+        raise requests.exceptions.ReadTimeout("Read timed out. (read timeout=600)")
+
+    monkeypatch.setattr(Container, "commit", stuck)
+    with pytest.raises(SandboxError, match=r"Can't save .* timed out"):
+        sandbox.save_image("pr-reviewer-test", "never", {})
 
 
 @pytest.mark.docker

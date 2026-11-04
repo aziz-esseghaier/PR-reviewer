@@ -401,12 +401,11 @@ def render_review(findings: Sequence[Finding]) -> str:
     return "\n\n".join(points)
 
 
-# Share of the repo's tests that must pass for a setup check to count.
-# Tune it once the setup agent runs on the real repos.
-MIN_PASS_RATE = 0.8
+# Share of the selected tests that must pass for a setup check to count. Old commits often
+# have a few tests broken by time (dates, newer libraries), so not all of them must pass.
+MIN_PASS_RATE = 0.9
 
-# A name that is safe to paste into a shell command: a Debian package or an environment variable.
-PackageName = Annotated[str, StringConstraints(pattern=r"^[a-z0-9][a-z0-9+.-]*$")]
+# A name that is safe to use as an environment variable.
 EnvName = Annotated[str, StringConstraints(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")]
 
 
@@ -446,17 +445,16 @@ class EnvRecipe(BaseModel):
     """How to build a working environment for one repo over a period of time.
 
     The setup agent writes it and the sandbox runs it. Its commands come from a model, so they
-    only ever run inside a container.
+    only ever run inside a container. The system tools (compilers, libraries) are fixed in the
+    sandbox image; a recipe only picks the Python version and the Python-level steps.
 
     Attributes:
         repo (str): GitHub repo, such as "psf/requests".
-        python_version (str): Python version, such as "3.11".
-        base_image (str): Docker image to start from, such as "python:3.11-slim".
-        system_packages (tuple[PackageName, ...]): Debian packages to install first.
+        python_version (str): Python version, such as "3.11". uv installs it.
         install_steps (tuple[str, ...]): Shell commands that install the repo and its test
             dependencies, run in order at the repo root with the network on.
         test_command (str): Shell command that runs the tests with the network off, such as
-            "python -m pytest -q". Test paths are added at the end.
+            "python -m pytest". Test paths are added at the end.
         env (dict[EnvName, str]): Extra environment variables for install and test.
         checks (tuple[SetupCheck, ...]): Test runs made with this recipe.
     """
@@ -465,8 +463,6 @@ class EnvRecipe(BaseModel):
 
     repo: str = Field(pattern=r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
     python_version: str = Field(pattern=r"^3\.\d{1,2}$")
-    base_image: str = Field(pattern=r"^[a-z0-9][a-z0-9._/-]*(:[A-Za-z0-9._-]+)?$")
-    system_packages: tuple[PackageName, ...] = ()
     install_steps: tuple[str, ...] = Field(min_length=1)
     test_command: str = Field(min_length=1)
     env: dict[EnvName, str] = Field(default_factory=dict)
