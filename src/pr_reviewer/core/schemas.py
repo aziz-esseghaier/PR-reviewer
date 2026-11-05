@@ -367,8 +367,10 @@ class Finding(BaseModel):
         return self.model_copy(update={"evidence": (*self.evidence, item)})
 
 
-# The whole review when there's nothing to report. SWR-Bench counts it as "no issues".
-NO_ISSUES = "No issues found. The changes look correct."
+# The whole review when there's nothing to report, in the words SWR-Bench's own review prompt
+# asks for: "If you find no issues, please explicitly state that the pull request looks good
+# and meets the standards." Its judge reads it as approving the PR.
+NO_ISSUES = "The pull request looks good and meets the standards."
 
 
 def render_review(findings: Sequence[Finding]) -> str:

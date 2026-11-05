@@ -127,7 +127,7 @@ def match_predictions(
         raise DatasetError(
             f"{len(missing)} of the {len(wanted)} {set_name} PRs have no review, such as "
             f"{missing[0]}. Every PR needs one; a PR with nothing to report gets a review "
-            "saying so, such as 'No issues found.'"
+            "saying so, such as 'The pull request looks good and meets the standards.'"
         )
     extra = sorted(by_id.keys() - set(wanted))
     if extra:

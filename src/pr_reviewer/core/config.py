@@ -233,7 +233,10 @@ class ModelProfile(BaseModel):
         provider (str): Name of an entry in the providers section.
         model (str): Model ID as the provider spells it.
         temperature (float): Sampling randomness. 0 gives the most repeatable answers.
-        max_tokens (int): Longest reply the model may write, in tokens.
+        max_tokens (int): Longest reply the model may write, in tokens. For a reasoning model,
+            its thinking counts too.
+        reasoning_effort (Literal["low", "medium", "high"] | None): How long a reasoning
+            model, such as gpt-oss, thinks before answering. None leaves it to the provider.
         limits (ModelLimits): Per-minute and per-day limits to stay under. Empty means none.
     """
 
@@ -243,6 +246,7 @@ class ModelProfile(BaseModel):
     model: str = Field(min_length=1)
     temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     max_tokens: int = Field(default=1024, gt=0)
+    reasoning_effort: Literal["low", "medium", "high"] | None = None
     limits: ModelLimits = ModelLimits()
 
 

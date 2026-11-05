@@ -6,6 +6,8 @@ results/<name>/ holds one scored set of reviews:
 - metrics.json: SWR-Bench's metrics, as its analyze_result() gives them. Kept in git.
 - summary.md: the main metrics as readable tables. Kept in git.
 - raw/: the reviews file and SWR-Bench's full output, with each judge reply. Not in git.
+When our own reviewer wrote the reviews, the same folder also holds its run: review_config.json
+and review_summary.md, with the reviews and findings in raw/ (see reviewer/commands.py).
 
 The database gets the benchmark PRs (bench_prs), the experiment (experiments) and one row of
 counts per PR (pr_scores), so later results can be grouped by repo, year or kind with SQL.
@@ -39,6 +41,9 @@ from pr_reviewer.core.config import ConfigError, project_root
 # Experiment names become folder names, so they stay short and simple.
 NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 
+# The settings file of a review run (reviewer/commands.py), in the folder its scores go to.
+REVIEW_CONFIG = "review_config.json"
+
 
 def results_folder(name: str) -> Path:
     """Give the folder of an experiment, after checking its name.
@@ -65,7 +70,8 @@ def check_folder(folder: Path, predictions_sha256: str) -> None:
     """Make sure a results folder is free, or holds the scores of the same reviews file.
 
     Scoring the same reviews again under the same name replaces the old results, which is how
-    a stopped run is finished. Another reviews file needs another name.
+    a stopped run is finished. Another reviews file needs another name. A folder that holds
+    only a review run, not scored yet, counts as free: its scores go next to it.
 
     Args:
         folder (Path): The experiment's folder.
@@ -77,6 +83,8 @@ def check_folder(folder: Path, predictions_sha256: str) -> None:
     if not folder.exists() or not any(folder.iterdir()):
         return
     config = folder / "config.json"
+    if not config.is_file() and (folder / REVIEW_CONFIG).is_file():
+        return
     saved = json.loads(config.read_text(encoding="utf-8")) if config.is_file() else {}
     if saved.get("predictions", {}).get("sha256") != predictions_sha256:
         raise ConfigError(
@@ -96,8 +104,9 @@ class Experiment:
         reviewer (str): The reviewer's model, or "none" for a baseline without one.
         predictions_file (str): The reviews file's name, without its folders.
         predictions_sha256 (str): The reviews file's fingerprint.
-        reviews (int): How many reviews it holds.
+        reviews (int): How many reviews were scored.
         judge (dict[str, Any]): The judge's profile, provider, model, temperature and max_tokens.
+        since (int | None): Only the set's PRs from this year on were scored. None means all.
     """
 
     name: str
@@ -108,17 +117,20 @@ class Experiment:
     predictions_sha256: str
     reviews: int
     judge: dict[str, Any]
+    since: int | None = None
 
     def config(self) -> dict[str, Any]:
         """Give the experiment as the JSON object saved in config.json.
 
         Returns:
-            dict[str, Any]: The config.
+            dict[str, Any]: The config. "since" appears only when a subset was scored.
         """
+        subset = {} if self.since is None else {"since": self.since}
         return {
             "name": self.name,
             "date": self.date,
             "split": self.split,
+            **subset,
             "reviewer": self.reviewer,
             "predictions": {
                 "file": self.predictions_file,
@@ -204,11 +216,12 @@ def summary_markdown(experiment: Experiment, analysis: dict[str, Any], prs: int)
             )
         )
     judge = experiment.judge
+    subset = "" if experiment.since is None else f" from {experiment.since} on"
     lines = [
         f"# Scores: {experiment.name}",
         "",
-        f"- Reviews: `{experiment.predictions_file}`, {prs} PRs of the {experiment.split} set "
-        f"({change['count']} with known issues, {clean['count']} clean)",
+        f"- Reviews: `{experiment.predictions_file}`, {prs} PRs of the {experiment.split} set"
+        f"{subset} ({change['count']} with known issues, {clean['count']} clean)",
         f"- Reviewer: {experiment.reviewer}",
         f"- Judge: {judge['model']} (temperature {judge['temperature']}, replies up to "
         f"{judge['max_tokens']:,} tokens), SWR-Bench's scorer at {SOURCE_COMMIT[:7]}",

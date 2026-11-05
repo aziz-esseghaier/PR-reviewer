@@ -13,13 +13,13 @@ import json
 from collections.abc import Sequence
 
 from pr_reviewer.benchmark.baselines import (
-    APPROVAL,
     known_issue_review,
     known_issue_reviews,
     no_comment_reviews,
 )
 from pr_reviewer.benchmark.dataset import Instance
 from pr_reviewer.benchmark.source import official_dir
+from pr_reviewer.core.schemas import NO_ISSUES
 from tests.benchmark.test_dataset import make_row
 
 
@@ -47,15 +47,15 @@ CLEAN = make_pr(2, [])
 def test_approval_is_in_swr_bench_own_words() -> None:
     """Check that the approval is the sentence SWR-Bench's review prompt asks for."""
     prompt = (official_dir() / "generation.py").read_text(encoding="utf-8")
-    assert f"state that {APPROVAL[0].lower()}{APPROVAL[1:]}" in prompt
+    assert f"state that {NO_ISSUES[0].lower()}{NO_ISSUES[1:]}" in prompt
 
 
 def test_no_comment_reviews_approve_every_pr() -> None:
     """Check that every PR gets the approval, in the order given."""
     reviews = no_comment_reviews([WITH_ISSUES, CLEAN])
     assert [(r.instance_id, r.review) for r in reviews] == [
-        (WITH_ISSUES.instance_id, APPROVAL),
-        (CLEAN.instance_id, APPROVAL),
+        (WITH_ISSUES.instance_id, NO_ISSUES),
+        (CLEAN.instance_id, NO_ISSUES),
     ]
 
 

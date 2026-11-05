@@ -23,6 +23,9 @@ How to run (inside the conda env, from the project folder):
     pr-reviewer score <reviews.jsonl> --name <experiment> --reviewer <model or none>
                                               score one review per dev PR with SWR-Bench's
                                               scorer and the judge; results go to results/<name>/
+                                              (--since <year> scores only the PRs from that year on)
+    pr-reviewer review naive                  review the dev PRs from 2022 on from the diff alone
+                                              (the baseline reviewer), ready to score
     pr-reviewer sandbox build | repos | check | status | cleanup
                                               build the sandbox images, download the dev PRs'
                                               repos, check their checkouts, show or clean up
@@ -131,6 +134,7 @@ from pr_reviewer.db.connection import connect, extension_version, server_version
 from pr_reviewer.db.migrate import applied_migrations, discover_migrations, migrate
 from pr_reviewer.demo_graph import STATE_TYPES, DemoResult, new_thread_id, run_demo
 from pr_reviewer.difftest.commands import add_commands as add_difftest_commands
+from pr_reviewer.reviewer.commands import add_commands as add_review_commands
 from pr_reviewer.sandbox.commands import add_commands as add_sandbox_commands
 from pr_reviewer.sandbox.image import ImageError
 from pr_reviewer.sandbox.runner import SandboxError
@@ -627,7 +631,7 @@ def _score(args: argparse.Namespace) -> int:
 
     Args:
         args (argparse.Namespace): Parsed arguments. Uses `predictions`, `name`, `reviewer`,
-            `split`, `unlock_test_set`, `config` and `data`.
+            `split`, `unlock_test_set`, `since`, `config` and `data`.
 
     Returns:
         int: Exit code, 0 when every PR was scored and the results were saved.
@@ -638,9 +642,16 @@ def _score(args: argparse.Namespace) -> int:
     data: Path = args.data or default_dataset_path()
     instances = load_dataset(data, sha256=DATASET.sha256)
     split = load_split(split_path(), sha256=SPLIT_SHA256)
-    prs = split_prs(instances, split, args.split, unlock_test=args.unlock_test_set)
+    in_set = split_prs(instances, split, args.split, unlock_test=args.unlock_test_set)
+    prs = [pr for pr in in_set if args.since is None or pr.year >= args.since]
+    if not prs:
+        raise DatasetError(f"The {args.split} set has no PRs from {args.since} on.")
+    # Reviews of the set's PRs from before `since` are left out, so a file covering the
+    # whole set can be scored on the subset too.
+    left_out = {pr.instance_id for pr in in_set} - {pr.instance_id for pr in prs}
     predictions_path: Path = args.predictions
-    predictions = match_predictions(load_predictions(predictions_path), prs, args.split)
+    loaded = [p for p in load_predictions(predictions_path) if p.instance_id not in left_out]
+    predictions = match_predictions(loaded, prs, args.split)
     predictions_sha256 = sha256_of(predictions_path)
     check_folder(folder, predictions_sha256)
     records = load_records(data, [pr.instance_id for pr in prs])
@@ -660,9 +671,11 @@ def _score(args: argparse.Namespace) -> int:
             "temperature": judge_profile.temperature,
             "max_tokens": judge_profile.max_tokens,
         },
+        since=args.since,
     )
     total = len(predictions)
-    print(f"Scoring {total} reviews of the {args.split} set from {predictions_path.name}")
+    subset = "" if args.since is None else f" from {args.since} on"
+    print(f"Scoring {total} reviews of the {args.split} set{subset} from {predictions_path.name}")
     print(f"Judge: {JUDGE_MODEL}. Tracing: {describe_tracing()}")
 
     def show(position: int, instance_id: str, result: dict[str, Any] | None) -> None:
@@ -852,8 +865,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="allow --split test; only for the final test-set run",
     )
+    score.add_argument(
+        "--since",
+        type=int,
+        default=None,
+        help="score only the set's PRs from this year on; reviews of its other PRs are ignored",
+    )
     score.set_defaults(handler=_score)
 
+    add_review_commands(commands, data_option)
     add_sandbox_commands(commands, data_option)
     add_setup_commands(commands, data_option)
     add_difftest_commands(commands, data_option)

@@ -1,0 +1,25 @@
+{
+  "name": "baseline-known-issues-2022",
+  "date": "2026-11-05",
+  "split": "dev",
+  "since": 2022,
+  "reviewer": "none",
+  "predictions": {
+    "file": "known-issues.jsonl",
+    "sha256": "2abd198d6f0908e96d336dd32345dd9293f869e9fbaa1fd7b7a8ba63b62f8d71",
+    "reviews": 68
+  },
+  "judge": {
+    "profile": "judge-gemini-3.5-flash-lite",
+    "provider": "google",
+    "model": "gemini-3.5-flash-lite",
+    "temperature": 0.0,
+    "max_tokens": 8192
+  },
+  "swr_bench": {
+    "repo": "ZZR0/SWRench",
+    "commit": "67ae1d4395ac05f800d62b0e13678eadeb9fa5c7",
+    "dataset_sha256": "7048e7a92ea9f7a1e6812646694a040582448cc1dd9d515264a4b55071aff95d",
+    "split_sha256": "902988f742372825324e3d042d64a8eeca4cc142fb9546e57dcb6084daffd3c2"
+  }
+}

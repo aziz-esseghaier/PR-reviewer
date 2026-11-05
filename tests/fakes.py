@@ -169,16 +169,17 @@ class ScriptedProvider:
 
     Attributes:
         requests (list[httpx2.Request]): Every request received, oldest first.
-        script (list[str | int]): Steps still to play, in order. Text is a reply; a number
-            is an HTTP error code to answer with.
+        script (list[str | int | httpx2.Response]): Steps still to play, in order. Text is a
+            reply; a number is an HTTP error code to answer with; a response is sent as it is,
+            such as a reply cut off at the length limit.
     """
 
-    def __init__(self, script: Sequence[str | int]) -> None:
+    def __init__(self, script: Sequence[str | int | httpx2.Response]) -> None:
         """Set the replies to give.
 
         Args:
-            script (Sequence[str | int]): One step per expected request, such as
-                ['{"verdict": "upheld"}', 401].
+            script (Sequence[str | int | httpx2.Response]): One step per expected request,
+                such as ['{"verdict": "upheld"}', 401].
         """
         self.requests: list[httpx2.Request] = []
         self.script = list(script)
@@ -195,9 +196,23 @@ class ScriptedProvider:
         """
         self.requests.append(request)
         step = self.script.pop(0) if self.script else 400
+        if isinstance(step, httpx2.Response):
+            return step
         if isinstance(step, int):
             return httpx2.Response(step, json={"error": {"message": f"fake error {step}"}})
         return httpx2.Response(200, json=completion_body(step))
+
+    def body(self, index: int) -> dict[str, Any]:
+        """Read the JSON body of one received request.
+
+        Args:
+            index (int): Which request, 0 for the first.
+
+        Returns:
+            dict[str, Any]: The body, with the model, messages and settings.
+        """
+        body: dict[str, Any] = json.loads(self.requests[index].content)
+        return body
 
     def messages(self, index: int) -> list[dict[str, str]]:
         """Read the messages of one received request.

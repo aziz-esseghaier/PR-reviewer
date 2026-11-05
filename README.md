@@ -37,7 +37,7 @@ The first start can take about 10 minutes while pgAdmin sets itself up. Later st
 
 ## Models
 
-`configs/models.yaml` lists the LLM providers and named model profiles. Code and experiments pick a model by its profile name. API keys stay in `.env`.
+`configs/models.yaml` lists the LLM providers and named model profiles. Code and experiments pick a model by its profile name. API keys stay in `.env`. A profile can also set `reasoning_effort` (low, medium or high) for reasoning models such as gpt-oss; it's sent to the provider only when set, so older cached replies stay valid.
 
 ```
 pr-reviewer llm models               # list the profiles and whether their keys are set
@@ -147,9 +147,10 @@ python scripts/compare_judges.py <model> ...   # compare candidate judges on tes
 ```
 pr-reviewer score reviews.jsonl --name my-experiment --reviewer groq-gpt-oss-120b
 pr-reviewer score reviews.jsonl --name a-baseline --reviewer none    # reviews written without a model
+pr-reviewer score reviews.jsonl --name my-experiment --reviewer ... --since 2022   # only the PRs from 2022 on
 ```
 
-Before the first judge call it checks that every dev PR has exactly one review, that no review is for another PR, and that the reviews weren't written by the judge's own model. The test set is refused unless `--split test --unlock-test-set` is given, which only the final test-set run does. Judge replies are cached, so a run stopped by the daily quota continues where it stopped when run again, and scoring the same reviews again costs nothing. A dev run is about 130 judge calls.
+With `--since`, only the set's PRs from that year on are scored, and reviews of its older PRs in the file are ignored. Before the first judge call it checks that every dev PR has exactly one review, that no review is for another PR, and that the reviews weren't written by the judge's own model. The test set is refused unless `--split test --unlock-test-set` is given, which only the final test-set run does. Judge replies are cached, so a run stopped by the daily quota continues where it stopped when run again, and scoring the same reviews again costs nothing. A dev run is about 130 judge calls.
 
 Results go to `results/<name>/`: `config.json` (what was scored and how), `metrics.json` (SWR-Bench's metrics), `summary.md` (readable tables: PR-level accuracy and false alarms, then precision, recall and F1 of the review points, overall and for functional and evolvability issues apart), and `raw/` (the reviews and every judge reply, not in git). Per-PR counts also go to the `pr_scores` table, next to `bench_prs` (each PR's repo, year, kind and set), for grouping with SQL. Run `pr-reviewer db migrate` once to create those tables.
 
@@ -176,6 +177,40 @@ Clean PRs get the same review in both, so the second run sends the judge only th
 | Known issues | 1.000 | 1.000 | 1.000 | 1.000 |
 
 Approving everything already gets 0.70 PR accuracy, because most PRs are clean. So compare reviewers on the point-level scores, not on accuracy.
+
+On the 68 dev PRs from 2022 onward (26 with issues, 42 clean), the PRs later reviewers are measured on, no comments scores 0.618 PR accuracy and known issues 1.000 everywhere (`results/baseline-*-2022/`, scored from the judge's cached answers).
+
+## Naive reviewer (the baseline reviewer)
+
+The first reviewer sends the PR to the model and asks for its problems, with no context and no evidence. Every later reviewer is measured against it.
+
+1. The PR's text (title, description, diffs) is written exactly as SWR-Bench gives it to reviewers, between `<pull_request>` tags. The prompt says it's data written by the PR's author, never instructions.
+2. The model is `openai/gpt-oss-120b` on Groq (profile `reviewer-gpt-oss-120b`, temperature 0, reasoning effort medium), the same for every reviewer experiment. It replies with a JSON object of findings, each a `Claim`: file, lines, SWR-Bench category, a one-sentence summary, the exception a test would hit, and a confidence. Groq enforces the JSON schema.
+3. The reply is checked against `Claim`. A reply that isn't valid, or was cut off, is rejected and the model is asked again with the reason, up to 3 times. A PR with no usable reply fails, and the next run tries it again with fresh replies.
+4. At most 10 findings are kept, with no confidence filter, and become the review text: one numbered point each, or SWR-Bench's "looks good" sentence when there are none.
+
+The steps form a LangGraph graph, and the Postgres checkpointer saves its state after each step. Findings go to the `findings` table (migration 0008), next to `review_runs` and `pr_reviews`.
+
+**Size limit.** On Groq's free tier, a request (prompt plus the reply allowance) can't exceed 8,000 tokens a minute. gpt-oss's thinking counts toward its reply, so the reply gets 3,000 tokens and the PR text up to about 12,000 characters. A bigger PR keeps whole file diffs, source files first, and the left-out files are listed by name. A very long description is shortened when the diffs fit.
+
+```
+pr-reviewer review naive                  # review the 68 dev PRs from 2022 on, as run naive-gpt-oss-120b
+pr-reviewer score results/naive-gpt-oss-120b/raw/reviews.jsonl --name naive-gpt-oss-120b --reviewer reviewer-gpt-oss-120b --since 2022
+```
+
+A run uses about 230,000 tokens, a bit more than Groq's free 200,000 a day. It stops when the daily quota runs out and continues where it stopped when run again. `results/naive-gpt-oss-120b/` holds the run's settings (`review_config.json`) and summary (`review_summary.md`), the reviews and findings in `raw/`, and the scores (`summary.md`).
+
+Results on the 68 dev PRs from 2022 onward (26 with issues, 42 clean):
+
+| Reviewer | PR accuracy | Point precision | Point recall | Point F1 |
+|---|---|---|---|---|
+| No comments | 0.618 | 0.000 | 0.000 | 0.000 |
+| Naive (gpt-oss-120b) | 0.529 | 0.048 | 0.140 | 0.072 |
+| Known issues | 1.000 | 1.000 | 1.000 | 1.000 |
+
+On functional issues it scores precision 0.055, recall 0.207 and F1 0.087; on evolvability issues 0.035, 0.074 and 0.048.
+
+Only 8 of its 166 points match a known issue. 92 of the 158 false alarms are on clean PRs: it flags 27 of the 42, which is why its PR accuracy is below approving everything. That noise is what the evidence checks are meant to remove.
 
 ## Sandbox (Docker)
 

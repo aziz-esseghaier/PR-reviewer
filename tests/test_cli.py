@@ -258,6 +258,16 @@ def test_score_needs_a_review_for_every_pr(
     assert "1 of the 1 dev PRs have no review, such as psf__requests-5" in err
 
 
+def test_score_since_keeps_only_the_newer_prs(
+    tiny_dataset: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Check --since drops the set's older PRs, and refuses a subset with none left."""
+    reviews = write_reviews(tmp_path, "psf__requests-5")
+    args = ["score", str(reviews), "--name", "t", "--reviewer", "none", "--since", "2022"]
+    assert main([*args, "--data", str(tiny_dataset)]) == 1
+    assert "The dev set has no PRs from 2022 on." in capsys.readouterr().err
+
+
 def test_score_refuses_a_bad_experiment_name(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

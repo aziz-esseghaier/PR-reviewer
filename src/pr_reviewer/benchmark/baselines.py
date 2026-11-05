@@ -18,10 +18,7 @@ from collections.abc import Sequence
 
 from pr_reviewer.benchmark.dataset import Instance
 from pr_reviewer.benchmark.scoring import Prediction
-
-# What SWR-Bench's review prompt asks for when a reviewer finds no issue: "If you find no
-# issues, please explicitly state that the pull request looks good and meets the standards."
-APPROVAL = "The pull request looks good and meets the standards."
+from pr_reviewer.core.schemas import NO_ISSUES
 
 
 def no_comment_reviews(prs: Sequence[Instance]) -> list[Prediction]:
@@ -31,9 +28,9 @@ def no_comment_reviews(prs: Sequence[Instance]) -> list[Prediction]:
         prs (Sequence[Instance]): The PRs to review.
 
     Returns:
-        list[Prediction]: One approval per PR, in the order of `prs`.
+        list[Prediction]: One approval (NO_ISSUES) per PR, in the order of `prs`.
     """
-    return [Prediction(instance_id=pr.instance_id, review=APPROVAL) for pr in prs]
+    return [Prediction(instance_id=pr.instance_id, review=NO_ISSUES) for pr in prs]
 
 
 def known_issue_review(pr: Instance) -> str:
@@ -43,11 +40,11 @@ def known_issue_review(pr: Instance) -> str:
         pr (Instance): The PR, with its known issues.
 
     Returns:
-        str: A numbered list of SWR-Bench's summary of each known issue, or APPROVAL when the
-            PR is clean.
+        str: A numbered list of SWR-Bench's summary of each known issue, or NO_ISSUES when
+            the PR is clean.
     """
     if not pr.changes:
-        return APPROVAL
+        return NO_ISSUES
     summaries = (issue.change_discussion.discussion_summary.strip() for issue in pr.changes)
     return "\n".join(f"{number}. {text}" for number, text in enumerate(summaries, start=1))
 

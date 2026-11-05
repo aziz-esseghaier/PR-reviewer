@@ -135,6 +135,27 @@ def test_reply_format_is_sent_and_cached_separately() -> None:
     assert "response_format" not in json.loads(provider.requests[1].content)
 
 
+def test_reasoning_effort_is_sent_only_when_the_profile_sets_it() -> None:
+    """Check a profile's reasoning effort reaches the provider, and is absent otherwise."""
+    config = FAKE_CONFIG.model_copy(
+        update={
+            "models": {
+                **FAKE_CONFIG.models,
+                "fake-thinker": FAKE_CONFIG.models["fake-small"].model_copy(
+                    update={"reasoning_effort": "medium"}
+                ),
+            }
+        }
+    )
+    provider = FakeProvider("Hi there.")
+    fake_client(provider, profile="fake-thinker", config=config).complete(
+        [{"role": "user", "content": "Hello"}]
+    )
+    fake_client(provider).complete([{"role": "user", "content": "Hello"}])
+    assert json.loads(provider.requests[0].content)["reasoning_effort"] == "medium"
+    assert "reasoning_effort" not in json.loads(provider.requests[1].content)
+
+
 def test_empty_reply_is_not_cached() -> None:
     """Check that an empty reply isn't saved, so the next call asks the provider again."""
     provider = FakeProvider(None, "length")

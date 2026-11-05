@@ -34,6 +34,7 @@ from openai.types.chat import (
     ChatCompletionUserMessageParam,
     completion_create_params,
 )
+from openai.types.shared import ReasoningEffort
 from pydantic import BaseModel, ConfigDict
 
 from pr_reviewer.core.config import ModelsConfig, ProviderConfig, describe_reset, read_api_key
@@ -84,6 +85,8 @@ class LLMRequest(BaseModel):
         response_format (dict[str, Any] | None): The reply format to ask for, in the OpenAI
             format, such as {"type": "json_schema", "json_schema": {...}}. None means plain
             text. Left at None, it isn't part of the cache key, so older keys stay valid.
+        reasoning_effort (str | None): How long a reasoning model thinks, such as "medium".
+            Like response_format, left out of the cache key when None.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -95,6 +98,7 @@ class LLMRequest(BaseModel):
     max_tokens: int
     sample: int = 0
     response_format: dict[str, Any] | None = None
+    reasoning_effort: str | None = None
 
 
 class LLMResponse(BaseModel):
@@ -304,6 +308,7 @@ class LLMClient:
             max_tokens=self.profile.max_tokens,
             sample=sample,
             response_format=response_format,
+            reasoning_effort=self.profile.reasoning_effort,
         )
         with trace_model_call(self.name, request) as trace:
             response = self._answer(request)
@@ -374,6 +379,11 @@ class LLMClient:
                 if request.response_format is None
                 else cast(completion_create_params.ResponseFormat, request.response_format)
             )
+            effort = (
+                openai.omit
+                if request.reasoning_effort is None
+                else cast(ReasoningEffort, request.reasoning_effort)
+            )
             try:
                 completion = self._sdk.chat.completions.create(
                     model=request.model,
@@ -381,6 +391,7 @@ class LLMClient:
                     temperature=request.temperature,
                     max_tokens=request.max_tokens,
                     response_format=reply_format,
+                    reasoning_effort=effort,
                 )
             except openai.APIError as exc:
                 outcome, status = outcome_of(exc)

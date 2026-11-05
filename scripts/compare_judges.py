@@ -48,7 +48,6 @@ from pr_reviewer.core.config import (
 )
 from pr_reviewer.core.limits import LimitError
 from pr_reviewer.core.llm import LLMClient
-from pr_reviewer.core.schemas import NO_ISSUES
 from pr_reviewer.core.usage import PostgresUsageLog
 from pr_reviewer.db.connection import connect
 
@@ -56,6 +55,9 @@ OUT_DIR = Path("results") / "judge-choice"
 MAX_TOKENS = 8192  # what SWR-Bench's scorer asks the judge for by default
 ISSUE_PRS = 5
 CLEAN_PRS = 2
+# The "none" review this trial ran with. Kept as it was, so a rerun is answered from the cache;
+# reviewers now use SWR-Bench's own wording (schemas.NO_ISSUES).
+NONE_REVIEW = "No issues found. The changes look correct."
 
 
 @dataclass
@@ -184,13 +186,13 @@ def make_test_reviews(
         known = as_review(reviewer_comments(pr))
         reviews += [
             (pr, "known", known),
-            (pr, "none", NO_ISSUES),
+            (pr, "none", NONE_REVIEW),
             (pr, "wrong", as_review(reviewer_comments(other))),
             (pr, "known-again", known),
         ]
     for index, pr in enumerate(clean):
         reviews += [
-            (pr, "none", NO_ISSUES),
+            (pr, "none", NONE_REVIEW),
             (pr, "wrong", as_review(reviewer_comments(with_issues[index]))),
         ]
     return reviews

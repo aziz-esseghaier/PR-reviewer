@@ -12,6 +12,7 @@ How to run (from the project folder):
 
 import json
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +21,7 @@ import pytest
 from psycopg.rows import TupleRow
 
 from pr_reviewer.benchmark.results import (
+    REVIEW_CONFIG,
     Experiment,
     check_folder,
     plain_json,
@@ -124,6 +126,26 @@ def test_folder_is_reused_only_for_the_same_reviews(tmp_path: Path) -> None:
     (other / "decision.md").write_text("x")
     with pytest.raises(ConfigError, match="already holds other results"):
         check_folder(other, "a" * 64)
+
+
+def test_a_review_runs_folder_takes_its_scores(tmp_path: Path) -> None:
+    """Check a folder holding only a review run, not scored yet, is free for its scores."""
+    folder = tmp_path / "results" / "naive"
+    (folder / "raw").mkdir(parents=True)
+    (folder / REVIEW_CONFIG).write_text("{}")
+    (folder / "raw" / "reviews.jsonl").write_text("")
+    check_folder(folder, "a" * 64)
+
+
+def test_a_scored_subset_says_so() -> None:
+    """Check `since` goes into config.json and the summary, and is absent otherwise."""
+    subset = replace(EXPERIMENT, since=2022)
+    assert subset.config()["since"] == 2022
+    assert "since" not in EXPERIMENT.config()
+    run = run_with([NO_POINTS, GOOD_CLEAN], "No issues.", "No issues.")
+    assert run.analysis is not None
+    summary = summary_markdown(subset, plain_json(run.analysis), 2)
+    assert "2 PRs of the dev set from 2022 on (" in summary
 
 
 @pytest.fixture

@@ -40,6 +40,22 @@ models:
       requests_per_day: 1000
       tokens_per_day: 200000
 
+  # The reviewer's model, the same for every reviewer experiment so results compare. It shares
+  # the daily quota above. Its thinking counts against max_tokens (2,000 was too few for big
+  # PRs), and the prompt plus max_tokens must stay under 8,000 tokens a minute, which sets how
+  # much of a PR fits.
+  reviewer-gpt-oss-120b:
+    provider: groq
+    model: openai/gpt-oss-120b
+    temperature: 0
+    max_tokens: 3000
+    reasoning_effort: medium
+    limits:
+      requests_per_minute: 30
+      tokens_per_minute: 8000
+      requests_per_day: 1000
+      tokens_per_day: 200000
+
   # The same model as the judge below, so it isn't used as a reviewer in experiments.
   google-gemini-3.5-flash-lite:
     provider: google

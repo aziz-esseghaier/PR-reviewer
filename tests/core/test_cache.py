@@ -74,6 +74,7 @@ def test_request_key_is_a_stable_sha256() -> None:
         {"max_tokens": 65},
         {"sample": 1},
         {"response_format": {"type": "json_object"}},
+        {"reasoning_effort": "medium"},
     ],
 )
 def test_request_key_changes_with_any_field(change: dict[str, Any]) -> None:
