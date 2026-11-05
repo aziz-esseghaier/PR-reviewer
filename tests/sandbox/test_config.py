@@ -28,18 +28,18 @@ proxy:
   port: 8888
   allowed_hosts: [pypi.org, github.com]
 limits: {cpus: 2, memory_gb: 2, processes: 512, lifetime_minutes: 120}
-timeouts: {install_minutes: 30, test_minutes: 15, download_minutes: 60}
+timeouts: {install_minutes: 30, test_minutes: 15, download_minutes: 60, difftest_minutes: 5}
 """
 
 
 def test_project_config_holds_the_agreed_limits() -> None:
-    """Check the real config: 2 CPUs, 2 GB, 512 processes, 2 hours, 30/15/60 minutes."""
+    """Check the real config: 2 CPUs, 2 GB, 512 processes, 2 hours, 30/15/60/5 minutes."""
     config = load_sandbox_config()
     limits, timeouts = config.limits, config.timeouts
     assert (limits.cpus, limits.memory_gb, limits.processes) == (2, 2, 512)
     assert limits.lifetime_minutes == 120
     assert (timeouts.install_minutes, timeouts.test_minutes) == (30, 15)
-    assert timeouts.download_minutes == 60
+    assert (timeouts.download_minutes, timeouts.difftest_minutes) == (60, 5)
 
 
 def test_bad_config_is_refused_without_repeating_values(tmp_path: Path) -> None:

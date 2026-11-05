@@ -37,3 +37,4 @@ timeouts:
   install_minutes: 30     # installing a repo and its dependencies (network on)
   test_minutes: 15        # running tests or a check (network off)
   download_minutes: 60    # downloading a repo's shared copy from GitHub
+  difftest_minutes: 5     # one run of a few chosen tests (differential runner); longer = stuck

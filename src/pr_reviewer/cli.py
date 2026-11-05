@@ -28,6 +28,9 @@ How to run (inside the conda env, from the project folder):
                                               repos, check their checkouts, show or clean up
     pr-reviewer sandbox run <instance_id> --at base|pr -- <command>
                                               run a command in a sandbox at a dev PR's commit
+    pr-reviewer setup run | report            build and check environments for the dev PRs
+    pr-reviewer difftest prepare | run | validate
+                                              run tests before and after a dev PR, and compare
 `python -m pr_reviewer.cli ...` works the same way.
 """
 
@@ -127,6 +130,7 @@ from pr_reviewer.db.checkpoints import open_checkpointer, setup_checkpoints
 from pr_reviewer.db.connection import connect, extension_version, server_version, table_exists
 from pr_reviewer.db.migrate import applied_migrations, discover_migrations, migrate
 from pr_reviewer.demo_graph import STATE_TYPES, DemoResult, new_thread_id, run_demo
+from pr_reviewer.difftest.commands import add_commands as add_difftest_commands
 from pr_reviewer.sandbox.commands import add_commands as add_sandbox_commands
 from pr_reviewer.sandbox.image import ImageError
 from pr_reviewer.sandbox.runner import SandboxError
@@ -852,6 +856,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     add_sandbox_commands(commands, data_option)
     add_setup_commands(commands, data_option)
+    add_difftest_commands(commands, data_option)
     return parser
 
 

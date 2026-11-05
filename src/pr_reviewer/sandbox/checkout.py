@@ -130,6 +130,45 @@ def checkout(sandbox: Sandbox, pr: Instance, side: Side) -> tuple[str, str]:
     """
     path = working_copy(sandbox, pr.repo)
     sha = commit_at(sandbox, path, pr, side)
+    return path, _switch(sandbox, pr, path, sha, side)
+
+
+def checkout_commit(sandbox: Sandbox, pr: Instance, sha: str) -> tuple[str, str]:
+    """Put the working copy at one of the PR's own commits, such as a later fix.
+
+    Args:
+        sandbox (Sandbox): The sandbox.
+        pr (Instance): The PR.
+        sha (str): The full ID of one of the PR's commits (its all_commits).
+
+    Returns:
+        tuple[str, str]: The working copy's folder, and the commit ID it's now at.
+
+    Raises:
+        CheckoutError: If the commit isn't one of the PR's, or the checkout fails.
+    """
+    if sha not in {commit.sha for commit in pr.all_commits}:
+        raise CheckoutError(f"{pr.instance_id}: {sha[:10]} isn't one of the PR's commits")
+    path = working_copy(sandbox, pr.repo)
+    return path, _switch(sandbox, pr, path, sha, sha[:10])
+
+
+def _switch(sandbox: Sandbox, pr: Instance, path: str, sha: str, name: str) -> str:
+    """Check out a commit in the working copy and make sure git is there.
+
+    Args:
+        sandbox (Sandbox): The sandbox.
+        pr (Instance): The PR, for messages.
+        path (str): The working copy.
+        sha (str): The full commit ID.
+        name (str): What the commit is, for messages and log names, such as "base".
+
+    Returns:
+        str: The commit ID git is now at.
+
+    Raises:
+        CheckoutError: If the checkout fails, or git ends up at a different commit.
+    """
     result = sandbox.run(
         [
             "git",
@@ -144,11 +183,11 @@ def checkout(sandbox: Sandbox, pr: Instance, side: Side) -> tuple[str, str]:
             sha,
         ],
         timeout=GIT_TIMEOUT,
-        label=f"checkout-{side}",
+        label=f"checkout-{name}",
     )
     if not result.ok:
         raise CheckoutError(
-            f"{pr.instance_id}: checking out the {side} side ({sha[:10]}) failed: "
+            f"{pr.instance_id}: checking out {name} ({sha[:10]}) failed: "
             f"{result.describe()}: {result.output.strip()[-300:]}"
         )
     head = git(sandbox, ["-C", path, "rev-parse", "HEAD"], timeout=GIT_TIMEOUT, label="head")
@@ -156,4 +195,4 @@ def checkout(sandbox: Sandbox, pr: Instance, side: Side) -> tuple[str, str]:
         raise CheckoutError(
             f"{pr.instance_id}: asked for {sha[:10]} but git is at {head[:10]} after checkout"
         )
-    return path, sha
+    return sha

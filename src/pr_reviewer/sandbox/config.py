@@ -102,6 +102,7 @@ class Timeouts(BaseModel):
         install_minutes (float): Installing a repo and its dependencies.
         test_minutes (float): Running tests or a check.
         download_minutes (float): Downloading a repo's shared copy from GitHub.
+        difftest_minutes (float): One run of a few chosen tests by the differential runner.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -109,6 +110,7 @@ class Timeouts(BaseModel):
     install_minutes: float = Field(gt=0, le=24 * 60)
     test_minutes: float = Field(gt=0, le=24 * 60)
     download_minutes: float = Field(gt=0, le=24 * 60)
+    difftest_minutes: float = Field(gt=0, le=24 * 60)
 
 
 class SandboxConfig(BaseModel):

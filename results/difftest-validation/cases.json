@@ -1,0 +1,1135 @@
+[
+  {
+    "kind": "pr_tests",
+    "instance_id": "astropy__astropy-15549",
+    "issue": "",
+    "fix_commit": null,
+    "targets": [
+      "astropy/cosmology/parameter/tests/test_parameter.py::TestParameter::test_Parameters_reorder_by_signature",
+      "astropy/cosmology/parameter/tests/test_parameter.py::TestParameter::test_make_from_Parameter"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 4,
+      "fail_pass": 0,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "pr_fix": null,
+    "expected": 4,
+    "unexpected": [],
+    "caught": null,
+    "provable": 0,
+    "skipped": 0
+  },
+  {
+    "kind": "pr_tests",
+    "instance_id": "astropy__astropy-17800",
+    "issue": "",
+    "fix_commit": null,
+    "targets": [
+      "astropy/stats/tests/test_bayesian_blocks.py::test_errors",
+      "astropy/stats/tests/test_bayesian_blocks.py::test_binned_data_with_zeros"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 0,
+      "fail_pass": 2,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "pr_fix": null,
+    "expected": 2,
+    "unexpected": [],
+    "caught": null,
+    "provable": 0,
+    "skipped": 0
+  },
+  {
+    "kind": "related",
+    "instance_id": "django__django-15910",
+    "issue": "",
+    "fix_commit": null,
+    "targets": [
+      "template_tests.filter_tests.test_addslashes"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 5,
+      "fail_pass": 0,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "pr_fix": null,
+    "expected": 5,
+    "unexpected": [],
+    "caught": null,
+    "provable": 0,
+    "skipped": 0
+  },
+  {
+    "kind": "related",
+    "instance_id": "matplotlib__matplotlib-24674",
+    "issue": "",
+    "fix_commit": null,
+    "targets": [
+      "lib/matplotlib/tests/test_figure.py"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 104,
+      "fail_pass": 0,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 14
+    },
+    "pr_fix": null,
+    "expected": 104,
+    "unexpected": [],
+    "caught": null,
+    "provable": 0,
+    "skipped": 14
+  },
+  {
+    "kind": "pr_tests",
+    "instance_id": "pydata__xarray-6260",
+    "issue": "",
+    "fix_commit": null,
+    "targets": [
+      "xarray/tests/test_backends.py::TestZarrDictStore::test_write_region_w_coords",
+      "xarray/tests/test_backends.py::TestZarrDirectoryStore::test_write_region_w_coords"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 0,
+      "fail_pass": 0,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 2
+    },
+    "pr_fix": null,
+    "expected": 0,
+    "unexpected": [],
+    "caught": null,
+    "provable": 0,
+    "skipped": 2
+  },
+  {
+    "kind": "pr_tests",
+    "instance_id": "pydata__xarray-6316",
+    "issue": "",
+    "fix_commit": null,
+    "targets": [
+      "xarray/tests/test_backends.py::TestZarrDictStore::test_chunk_encoding_with_dask",
+      "xarray/tests/test_backends.py::TestZarrDirectoryStore::test_chunk_encoding_with_dask",
+      "xarray/tests/test_backends.py::TestZarrDictStore::test_write_preexisting_override_metadata",
+      "xarray/tests/test_backends.py::TestZarrDirectoryStore::test_write_preexisting_override_metadata",
+      "xarray/tests/test_backends.py::TestH5NetCDFFileObject::test_open_fileobj",
+      "xarray/tests/test_calendar_ops.py::test_convert_calendar_errors",
+      "xarray/tests/test_coarsen.py::test_coarsen_reduce",
+      "xarray/tests/test_coarsen.py::test_coarsen_da_reduce",
+      "xarray/tests/test_computation.py::test_cross",
+      "xarray/tests/test_dask.py::TestDataArrayAndDataset::test_concat_loads_variables",
+      "xarray/tests/test_dataarray.py::TestDataArray::test_struct_array_dims",
+      "xarray/tests/test_dataset.py::TestDataset::test_attr_access",
+      "xarray/tests/test_interp.py::test_interpolate_chunk_1d",
+      "xarray/tests/test_missing.py::test_scipy_methods_function",
+      "xarray/tests/test_plot.py::TestPlot::test__infer_interval_breaks_logscale_invalid_coords",
+      "xarray/tests/test_plot.py::TestContourf::test_convenient_facetgrid",
+      "xarray/tests/test_plot.py::TestContour::test_convenient_facetgrid",
+      "xarray/tests/test_plot.py::TestPcolormesh::test_convenient_facetgrid",
+      "xarray/tests/test_plot.py::TestImshow::test_convenient_facetgrid",
+      "xarray/tests/test_plot.py::TestSurface::test_convenient_facetgrid"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 93,
+      "fail_pass": 0,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 309
+    },
+    "pr_fix": null,
+    "expected": 93,
+    "unexpected": [],
+    "caught": null,
+    "provable": 0,
+    "skipped": 309
+  },
+  {
+    "kind": "pr_tests",
+    "instance_id": "pydata__xarray-8246",
+    "issue": "",
+    "fix_commit": null,
+    "targets": [
+      "xarray/tests/test_backends.py::TestNetCDF4Data::test_vectorized_indexing_negative_step",
+      "xarray/tests/test_backends.py::TestNetCDF4ViaDaskData::test_vectorized_indexing_negative_step",
+      "xarray/tests/test_backends.py::TestScipyInMemoryData::test_vectorized_indexing_negative_step",
+      "xarray/tests/test_backends.py::TestScipyFileObject::test_vectorized_indexing_negative_step",
+      "xarray/tests/test_backends.py::TestScipyFilePath::test_vectorized_indexing_negative_step",
+      "xarray/tests/test_backends.py::TestNetCDF3ViaNetCDF4Data::test_vectorized_indexing_negative_step",
+      "xarray/tests/test_backends.py::TestNetCDF4ClassicViaNetCDF4Data::test_vectorized_indexing_negative_step",
+      "xarray/tests/test_backends.py::TestGenericNetCDFData::test_vectorized_indexing_negative_step",
+      "xarray/tests/test_backends.py::TestH5NetCDFData::test_vectorized_indexing_negative_step",
+      "xarray/tests/test_backends.py::TestH5NetCDFFileObject::test_vectorized_indexing_negative_step",
+      "xarray/tests/test_backends.py::TestH5NetCDFViaDaskData::test_vectorized_indexing_negative_step",
+      "xarray/tests/test_backends.py::TestDask::test_vectorized_indexing_negative_step",
+      "xarray/tests/test_backends.py::TestPyNio::test_vectorized_indexing_negative_step",
+      "xarray/tests/test_backends.py::TestNetCDF4ViaDaskData::test_dataset_caching",
+      "xarray/tests/test_backends.py::TestZarrDictStore::test_dataset_caching",
+      "xarray/tests/test_backends.py::TestZarrDirectoryStore::test_dataset_caching",
+      "xarray/tests/test_backends.py::TestZarrWriteEmpty::test_dataset_caching",
+      "xarray/tests/test_backends.py::TestZarrKVStoreV3::test_dataset_caching",
+      "xarray/tests/test_backends.py::TestZarrDirectoryStoreV3::test_dataset_caching",
+      "xarray/tests/test_backends.py::TestZarrDirectoryStoreV3FromPath::test_dataset_caching",
+      "xarray/tests/test_backends.py::TestZarrDictStore::test_vectorized_indexing_negative_step",
+      "xarray/tests/test_backends.py::TestZarrDirectoryStore::test_vectorized_indexing_negative_step",
+      "xarray/tests/test_backends.py::TestZarrWriteEmpty::test_vectorized_indexing_negative_step",
+      "xarray/tests/test_backends.py::TestZarrKVStoreV3::test_vectorized_indexing_negative_step",
+      "xarray/tests/test_backends.py::TestZarrDirectoryStoreV3::test_vectorized_indexing_negative_step",
+      "xarray/tests/test_backends.py::TestZarrDirectoryStoreV3FromPath::test_vectorized_indexing_negative_step",
+      "xarray/tests/test_backends.py::TestH5NetCDFViaDaskData::test_dataset_caching",
+      "xarray/tests/test_backends.py::test_open_mfdataset_manyfiles",
+      "xarray/tests/test_backends.py::TestDask::test_encoding_mfdataset",
+      "xarray/tests/test_backends.py::TestDask::test_save_mfdataset_compute_false_roundtrip",
+      "xarray/tests/test_backends.py::test_open_fsspec",
+      "xarray/tests/test_cftimeindex.py::test_multiindex",
+      "xarray/tests/test_options.py::TestAttrRetention::test_merge_attr_retention",
+      "xarray/tests/test_rolling.py::TestDatasetRolling::test_raise_no_warning_dask_rolling_assert_close",
+      "xarray/tests/test_sparse.py::test_variable_method",
+      "xarray/tests/test_units.py::TestDataArray::test_bivariate_ufunc",
+      "xarray/tests/test_units.py::TestDataArray::test_computation_objects",
+      "xarray/tests/test_variable.py::TestVariable::test_pad",
+      "xarray/tests/test_variable.py::TestVariableWithDask::test_multiindex",
+      "xarray/tests/test_variable.py::TestVariableWithDask::test_pad"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 46,
+      "fail_pass": 0,
+      "fail_fail": 2,
+      "flaky": 0,
+      "not_run": 162
+    },
+    "pr_fix": null,
+    "expected": 46,
+    "unexpected": [
+      "xarray/tests/test_rolling.py::TestDatasetRolling::test_raise_no_warning_dask_rolling_assert_close[numpy-max-2]: fail_fail",
+      "xarray/tests/test_rolling.py::TestDatasetRolling::test_raise_no_warning_dask_rolling_assert_close[numpy-mean-2]: fail_fail"
+    ],
+    "caught": null,
+    "provable": 0,
+    "skipped": 162
+  },
+  {
+    "kind": "fix_tests",
+    "instance_id": "pydata__xarray-8246",
+    "issue": "F.2",
+    "fix_commit": "88155cd2ef81f38a4d38112dee51b0388a47c00a",
+    "targets": [
+      "xarray/tests/test_variable.py::TestVariableWithDask::test_pad"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 0,
+      "fail_pass": 0,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 45
+    },
+    "pr_fix": {
+      "pass_fail": 0,
+      "pass_pass": 0,
+      "fail_pass": 0,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 45
+    },
+    "expected": 0,
+    "unexpected": [],
+    "caught": false,
+    "provable": 0,
+    "skipped": 45
+  },
+  {
+    "kind": "pr_tests",
+    "instance_id": "pydata__xarray-8441",
+    "issue": "",
+    "fix_commit": null,
+    "targets": [
+      "xarray/tests/test_dataarray.py::TestDataArray::test_to_dataset_whole"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 1,
+      "fail_pass": 0,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "pr_fix": null,
+    "expected": 1,
+    "unexpected": [],
+    "caught": null,
+    "provable": 0,
+    "skipped": 0
+  },
+  {
+    "kind": "related",
+    "instance_id": "pylint-dev__pylint-7537",
+    "issue": "",
+    "fix_commit": null,
+    "targets": [
+      "tests/checkers/unittest_variables.py"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 10,
+      "fail_pass": 0,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "pr_fix": null,
+    "expected": 10,
+    "unexpected": [],
+    "caught": null,
+    "provable": 0,
+    "skipped": 0
+  },
+  {
+    "kind": "related",
+    "instance_id": "pytest-dev__pytest-12746",
+    "issue": "",
+    "fix_commit": null,
+    "targets": [
+      "testing/test_nodes.py"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 8,
+      "fail_pass": 0,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "pr_fix": null,
+    "expected": 8,
+    "unexpected": [],
+    "caught": null,
+    "provable": 0,
+    "skipped": 0
+  },
+  {
+    "kind": "pr_tests",
+    "instance_id": "scikit-learn__scikit-learn-22454",
+    "issue": "",
+    "fix_commit": null,
+    "targets": [
+      "sklearn/metrics/tests/test_score_objects.py::test_scorer_select_proba_error"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 3,
+      "fail_pass": 0,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "pr_fix": null,
+    "expected": 3,
+    "unexpected": [],
+    "caught": null,
+    "provable": 0,
+    "skipped": 0
+  },
+  {
+    "kind": "pr_tests",
+    "instance_id": "scikit-learn__scikit-learn-22957",
+    "issue": "",
+    "fix_commit": null,
+    "targets": [
+      "sklearn/metrics/tests/test_pairwise.py::test_pairwise_boolean_distance",
+      "sklearn/metrics/tests/test_pairwise.py::test_no_data_conversion_warning"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 10,
+      "fail_pass": 0,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "pr_fix": null,
+    "expected": 10,
+    "unexpected": [],
+    "caught": null,
+    "provable": 0,
+    "skipped": 0
+  },
+  {
+    "kind": "fix_tests",
+    "instance_id": "scikit-learn__scikit-learn-22957",
+    "issue": "F.2",
+    "fix_commit": "bbba528de27b395cfbcaaa9d4f62edd33eeee25d",
+    "targets": [
+      "sklearn/metrics/tests/test_pairwise.py::test_pairwise_boolean_distance"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 9,
+      "fail_pass": 0,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "pr_fix": {
+      "pass_fail": 0,
+      "pass_pass": 9,
+      "fail_pass": 0,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "expected": 0,
+    "unexpected": [],
+    "caught": false,
+    "provable": 0,
+    "skipped": 0
+  },
+  {
+    "kind": "fix_tests",
+    "instance_id": "scikit-learn__scikit-learn-22957",
+    "issue": "F.2",
+    "fix_commit": "b3fac2aa069f80032534ef62c55b9a0dba190ef4",
+    "targets": [
+      "sklearn/metrics/tests/test_pairwise.py::test_pairwise_boolean_distance",
+      "sklearn/metrics/tests/test_pairwise.py::test_no_data_conversion_warning"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 10,
+      "fail_pass": 0,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "pr_fix": {
+      "pass_fail": 0,
+      "pass_pass": 10,
+      "fail_pass": 0,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "expected": 0,
+    "unexpected": [],
+    "caught": false,
+    "provable": 0,
+    "skipped": 0
+  },
+  {
+    "kind": "pr_tests",
+    "instance_id": "scikit-learn__scikit-learn-23459",
+    "issue": "",
+    "fix_commit": null,
+    "targets": [
+      "sklearn/utils/tests/test_param_validation.py::test_stroptions",
+      "sklearn/utils/tests/test_param_validation.py::test_make_constraint_unknown",
+      "sklearn/utils/tests/test_param_validation.py::test_validate_params_match_error",
+      "sklearn/utils/tests/test_param_validation.py::test_decorate_validated_function",
+      "sklearn/utils/tests/test_param_validation.py::test_internal_values_not_exposed"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 3,
+      "fail_pass": 2,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "pr_fix": null,
+    "expected": 5,
+    "unexpected": [],
+    "caught": null,
+    "provable": 0,
+    "skipped": 0
+  },
+  {
+    "kind": "fix_tests",
+    "instance_id": "scikit-learn__scikit-learn-23459",
+    "issue": "F.4",
+    "fix_commit": "06502921fd3071aa0acf8bfd67fd4007d25c1253",
+    "targets": [
+      "sklearn/utils/tests/test_param_validation.py::test_stroptions_deprecated_internal_overlap"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 0,
+      "fail_pass": 0,
+      "fail_fail": 1,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "pr_fix": {
+      "pass_fail": 0,
+      "pass_pass": 0,
+      "fail_pass": 1,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "expected": 1,
+    "unexpected": [],
+    "caught": true,
+    "provable": 0,
+    "skipped": 0
+  },
+  {
+    "kind": "fix_tests",
+    "instance_id": "scikit-learn__scikit-learn-23459",
+    "issue": "F.4",
+    "fix_commit": "ab65a8988e657c205d72c43259b04033db464d62",
+    "targets": [
+      "sklearn/utils/tests/test_param_validation.py::test_stroptions_deprecated_internal_overlap",
+      "sklearn/utils/tests/test_param_validation.py::test_stroptions_deprecated_internal_subset"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 0,
+      "fail_pass": 0,
+      "fail_fail": 2,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "pr_fix": {
+      "pass_fail": 0,
+      "pass_pass": 0,
+      "fail_pass": 2,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "expected": 2,
+    "unexpected": [],
+    "caught": true,
+    "provable": 0,
+    "skipped": 0
+  },
+  {
+    "kind": "fix_tests",
+    "instance_id": "scikit-learn__scikit-learn-25108",
+    "issue": "F.1",
+    "fix_commit": "4344c491fbaaa6ffc126ea4746cd5e6a5c994b34",
+    "targets": [
+      "sklearn/model_selection/tests/test_split.py::test_train_test_split_default_test_size",
+      "sklearn/tests/test_public_functions.py::test_function_param_validation"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 12,
+      "fail_pass": 1,
+      "fail_fail": 1,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "pr_fix": {
+      "pass_fail": 0,
+      "pass_pass": 13,
+      "fail_pass": 1,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "expected": 1,
+    "unexpected": [],
+    "caught": true,
+    "provable": 0,
+    "skipped": 0
+  },
+  {
+    "kind": "pr_tests",
+    "instance_id": "scikit-learn__scikit-learn-25148",
+    "issue": "",
+    "fix_commit": null,
+    "targets": [
+      "sklearn/tests/test_multiclass.py::test_ecoc_predict_proba"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 0,
+      "fail_pass": 1,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "pr_fix": null,
+    "expected": 1,
+    "unexpected": [],
+    "caught": null,
+    "provable": 0,
+    "skipped": 0
+  },
+  {
+    "kind": "pr_tests",
+    "instance_id": "scikit-learn__scikit-learn-26420",
+    "issue": "",
+    "fix_commit": null,
+    "targets": [
+      "sklearn/model_selection/tests/test_split.py::test_train_test_split_sparse",
+      "sklearn/preprocessing/tests/test_data.py::test_normalizer_l1",
+      "sklearn/preprocessing/tests/test_data.py::test_normalizer_l2",
+      "sklearn/preprocessing/tests/test_data.py::test_normalizer_max",
+      "sklearn/preprocessing/tests/test_polynomial.py::test_polynomial_features_csc_X",
+      "sklearn/preprocessing/tests/test_polynomial.py::test_polynomial_features_csr_X",
+      "sklearn/preprocessing/tests/test_polynomial.py::test_polynomial_features_csr_X_floats",
+      "sklearn/preprocessing/tests/test_polynomial.py::test_polynomial_features_csr_X_zero_row",
+      "sklearn/preprocessing/tests/test_polynomial.py::test_polynomial_features_csr_X_degree_4",
+      "sklearn/preprocessing/tests/test_polynomial.py::test_polynomial_features_csr_X_dim_edges"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 48,
+      "fail_pass": 0,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "pr_fix": null,
+    "expected": 48,
+    "unexpected": [],
+    "caught": null,
+    "provable": 0,
+    "skipped": 0
+  },
+  {
+    "kind": "pr_tests",
+    "instance_id": "scikit-learn__scikit-learn-27943",
+    "issue": "",
+    "fix_commit": null,
+    "targets": [
+      "sklearn/linear_model/tests/test_quantile.py::test_error_interior_point_future"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 1,
+      "fail_pass": 0,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "pr_fix": null,
+    "expected": 1,
+    "unexpected": [],
+    "caught": null,
+    "provable": 0,
+    "skipped": 0
+  },
+  {
+    "kind": "fix_tests",
+    "instance_id": "scikit-learn__scikit-learn-27943",
+    "issue": "F.5",
+    "fix_commit": "151312de451f9497e12212b77e1619b718518c60",
+    "targets": [
+      "sklearn/datasets/tests/test_svmlight_format.py::test_load_invalid_file2",
+      "sklearn/model_selection/tests/test_split.py::test_array_api_train_test_split",
+      "sklearn/utils/tests/test_array_api.py::test_asarray_with_order",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum",
+      "sklearn/utils/tests/test_multiclass.py::test_is_multilabel_array_api_compliance"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 2,
+      "fail_pass": 0,
+      "fail_fail": 90,
+      "flaky": 0,
+      "not_run": 1
+    },
+    "pr_fix": {
+      "pass_fail": 0,
+      "pass_pass": 0,
+      "fail_pass": 0,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 93
+    },
+    "expected": 0,
+    "unexpected": [
+      "sklearn/datasets/tests/test_svmlight_format.py::test_load_invalid_file2: not_run",
+      "sklearn/model_selection/tests/test_split.py::test_array_api_train_test_split[False-None-cupy-None-None]: not_run",
+      "sklearn/model_selection/tests/test_split.py::test_array_api_train_test_split[False-None-cupy.array_api-None-None]: not_run",
+      "sklearn/model_selection/tests/test_split.py::test_array_api_train_test_split[False-None-numpy-None-None]: not_run",
+      "sklearn/model_selection/tests/test_split.py::test_array_api_train_test_split[False-None-numpy.array_api-None-None]: not_run",
+      "sklearn/model_selection/tests/test_split.py::test_array_api_train_test_split[False-None-torch-cpu-float32]: not_run",
+      "sklearn/model_selection/tests/test_split.py::test_array_api_train_test_split[False-None-torch-cpu-float64]: not_run",
+      "sklearn/model_selection/tests/test_split.py::test_array_api_train_test_split[False-None-torch-cuda-float32]: not_run",
+      "sklearn/model_selection/tests/test_split.py::test_array_api_train_test_split[False-None-torch-cuda-float64]: not_run",
+      "sklearn/model_selection/tests/test_split.py::test_array_api_train_test_split[False-None-torch-mps-float32]: not_run",
+      "sklearn/model_selection/tests/test_split.py::test_array_api_train_test_split[True-None-cupy-None-None]: not_run",
+      "sklearn/model_selection/tests/test_split.py::test_array_api_train_test_split[True-None-cupy.array_api-None-None]: not_run",
+      "sklearn/model_selection/tests/test_split.py::test_array_api_train_test_split[True-None-numpy-None-None]: not_run",
+      "sklearn/model_selection/tests/test_split.py::test_array_api_train_test_split[True-None-numpy.array_api-None-None]: not_run",
+      "sklearn/model_selection/tests/test_split.py::test_array_api_train_test_split[True-None-torch-cpu-float32]: not_run",
+      "sklearn/model_selection/tests/test_split.py::test_array_api_train_test_split[True-None-torch-cpu-float64]: not_run",
+      "sklearn/model_selection/tests/test_split.py::test_array_api_train_test_split[True-None-torch-cuda-float32]: not_run",
+      "sklearn/model_selection/tests/test_split.py::test_array_api_train_test_split[True-None-torch-cuda-float64]: not_run",
+      "sklearn/model_selection/tests/test_split.py::test_array_api_train_test_split[True-None-torch-mps-float32]: not_run",
+      "sklearn/model_selection/tests/test_split.py::test_array_api_train_test_split[True-stratify1-cupy-None-None]: not_run",
+      "sklearn/model_selection/tests/test_split.py::test_array_api_train_test_split[True-stratify1-cupy.array_api-None-None]: not_run",
+      "sklearn/model_selection/tests/test_split.py::test_array_api_train_test_split[True-stratify1-numpy-None-None]: not_run",
+      "sklearn/model_selection/tests/test_split.py::test_array_api_train_test_split[True-stratify1-numpy.array_api-None-None]: not_run",
+      "sklearn/model_selection/tests/test_split.py::test_array_api_train_test_split[True-stratify1-torch-cpu-float32]: not_run",
+      "sklearn/model_selection/tests/test_split.py::test_array_api_train_test_split[True-stratify1-torch-cpu-float64]: not_run",
+      "sklearn/model_selection/tests/test_split.py::test_array_api_train_test_split[True-stratify1-torch-cuda-float32]: not_run",
+      "sklearn/model_selection/tests/test_split.py::test_array_api_train_test_split[True-stratify1-torch-cuda-float64]: not_run",
+      "sklearn/model_selection/tests/test_split.py::test_array_api_train_test_split[True-stratify1-torch-mps-float32]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_asarray_with_order[numpy.array_api]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_asarray_with_order[numpy]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[None-False-10.0-cupy-None-None]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[None-False-10.0-cupy.array_api-None-None]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[None-False-10.0-numpy-None-None]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[None-False-10.0-numpy.array_api-None-None]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[None-False-10.0-torch-cpu-float32]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[None-False-10.0-torch-cpu-float64]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[None-False-10.0-torch-cuda-float32]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[None-False-10.0-torch-cuda-float64]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[None-False-10.0-torch-mps-float32]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[None-True-2.5-cupy-None-None]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[None-True-2.5-cupy.array_api-None-None]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[None-True-2.5-numpy-None-None]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[None-True-2.5-numpy.array_api-None-None]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[None-True-2.5-torch-cpu-float32]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[None-True-2.5-torch-cpu-float64]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[None-True-2.5-torch-cuda-float32]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[None-True-2.5-torch-cuda-float64]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[None-True-2.5-torch-mps-float32]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight2-False-5.5-cupy-None-None]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight2-False-5.5-cupy.array_api-None-None]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight2-False-5.5-numpy-None-None]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight2-False-5.5-numpy.array_api-None-None]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight2-False-5.5-torch-cpu-float32]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight2-False-5.5-torch-cpu-float64]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight2-False-5.5-torch-cuda-float32]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight2-False-5.5-torch-cuda-float64]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight2-False-5.5-torch-mps-float32]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight3-True-2.75-cupy-None-None]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight3-True-2.75-cupy.array_api-None-None]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight3-True-2.75-numpy-None-None]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight3-True-2.75-numpy.array_api-None-None]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight3-True-2.75-torch-cpu-float32]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight3-True-2.75-torch-cpu-float64]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight3-True-2.75-torch-cuda-float32]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight3-True-2.75-torch-cuda-float64]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight3-True-2.75-torch-mps-float32]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight4-False-30.0-cupy-None-None]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight4-False-30.0-cupy.array_api-None-None]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight4-False-30.0-numpy-None-None]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight4-False-30.0-numpy.array_api-None-None]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight4-False-30.0-torch-cpu-float32]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight4-False-30.0-torch-cpu-float64]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight4-False-30.0-torch-cuda-float32]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight4-False-30.0-torch-cuda-float64]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight4-False-30.0-torch-mps-float32]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight5-True-3.0-cupy-None-None]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight5-True-3.0-cupy.array_api-None-None]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight5-True-3.0-numpy-None-None]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight5-True-3.0-numpy.array_api-None-None]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight5-True-3.0-torch-cpu-float32]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight5-True-3.0-torch-cpu-float64]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight5-True-3.0-torch-cuda-float32]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight5-True-3.0-torch-cuda-float64]: not_run",
+      "sklearn/utils/tests/test_array_api.py::test_weighted_sum[sample_weight5-True-3.0-torch-mps-float32]: not_run",
+      "sklearn/utils/tests/test_multiclass.py::test_is_multilabel_array_api_compliance[cupy-None-None]: not_run",
+      "sklearn/utils/tests/test_multiclass.py::test_is_multilabel_array_api_compliance[cupy.array_api-None-None]: not_run",
+      "sklearn/utils/tests/test_multiclass.py::test_is_multilabel_array_api_compliance[numpy-None-None]: not_run",
+      "sklearn/utils/tests/test_multiclass.py::test_is_multilabel_array_api_compliance[numpy.array_api-None-None]: not_run",
+      "sklearn/utils/tests/test_multiclass.py::test_is_multilabel_array_api_compliance[torch-cpu-float32]: not_run",
+      "sklearn/utils/tests/test_multiclass.py::test_is_multilabel_array_api_compliance[torch-cpu-float64]: not_run",
+      "sklearn/utils/tests/test_multiclass.py::test_is_multilabel_array_api_compliance[torch-cuda-float32]: not_run",
+      "sklearn/utils/tests/test_multiclass.py::test_is_multilabel_array_api_compliance[torch-cuda-float64]: not_run",
+      "sklearn/utils/tests/test_multiclass.py::test_is_multilabel_array_api_compliance[torch-mps-float32]: not_run"
+    ],
+    "caught": false,
+    "provable": 0,
+    "skipped": 0
+  },
+  {
+    "kind": "pr_tests",
+    "instance_id": "scikit-learn__scikit-learn-29916",
+    "issue": "",
+    "fix_commit": null,
+    "targets": [
+      "sklearn/cluster/tests/test_hdbscan.py::test_hdbscan_error_precomputed_and_store_centers"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 2,
+      "fail_pass": 0,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "pr_fix": null,
+    "expected": 2,
+    "unexpected": [],
+    "caught": null,
+    "provable": 0,
+    "skipped": 0
+  },
+  {
+    "kind": "pr_tests",
+    "instance_id": "scikit-learn__scikit-learn-30296",
+    "issue": "",
+    "fix_commit": null,
+    "targets": [
+      "sklearn/utils/tests/test_validation.py::test_num_features_errors_1d_containers"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 20,
+      "fail_pass": 0,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "pr_fix": null,
+    "expected": 20,
+    "unexpected": [],
+    "caught": null,
+    "provable": 0,
+    "skipped": 0
+  },
+  {
+    "kind": "pr_tests",
+    "instance_id": "scikit-learn__scikit-learn-31106",
+    "issue": "",
+    "fix_commit": null,
+    "targets": [
+      "sklearn/cluster/tests/test_feature_agglomeration.py::test_feature_agglomeration_feature_names_out",
+      "sklearn/decomposition/tests/test_nmf.py::test_nmf_n_components_auto",
+      "sklearn/preprocessing/tests/test_discretization.py::test_invalid_quantile_method_with_sample_weight"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 4,
+      "fail_pass": 0,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "pr_fix": null,
+    "expected": 4,
+    "unexpected": [],
+    "caught": null,
+    "provable": 0,
+    "skipped": 0
+  },
+  {
+    "kind": "pr_tests",
+    "instance_id": "sphinx-doc__sphinx-12491",
+    "issue": "",
+    "fix_commit": null,
+    "targets": [
+      "tests/test_directives/test_directive_only.py::test_sectioning",
+      "tests/test_environment/test_environment_toctree.py::test_process_doc_html",
+      "tests/test_environment/test_environment_toctree.py::test_process_doc",
+      "tests/test_environment/test_environment_toctree.py::test_document_toc_only",
+      "tests/test_environment/test_environment_toctree.py::test_global_toctree_for_doc",
+      "tests/test_environment/test_environment_toctree.py::test_global_toctree_for_doc_collapse",
+      "tests/test_environment/test_environment_toctree.py::test_global_toctree_for_doc_maxdepth",
+      "tests/test_environment/test_environment_toctree.py::test_global_toctree_for_doc_includehidden",
+      "tests/test_intl/test_intl.py::test_gettext_section",
+      "tests/test_intl/test_intl.py::test_gettext_toctree",
+      "tests/test_intl/test_intl.py::test_gettext_table",
+      "tests/test_intl/test_intl.py::test_gettext_topic",
+      "tests/test_intl/test_intl.py::test_gettext_definition_terms",
+      "tests/test_intl/test_intl.py::test_gettext_glossary_terms",
+      "tests/test_intl/test_intl.py::test_gettext_glossary_term_inconsistencies",
+      "tests/test_intl/test_intl.py::test_gettext_buildr_ignores_only_directive"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 7,
+      "fail_pass": 9,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "pr_fix": null,
+    "expected": 16,
+    "unexpected": [],
+    "caught": null,
+    "provable": 0,
+    "skipped": 0
+  },
+  {
+    "kind": "pr_tests",
+    "instance_id": "sympy__sympy-22973",
+    "issue": "",
+    "fix_commit": null,
+    "targets": [
+      "sympy/polys/domains/tests/test_domains.py::test_Domain_alg_field_from_poly",
+      "sympy/polys/domains/tests/test_domains.py::test_Domain_cyclotomic_field",
+      "sympy/polys/numberfields/tests/test_basis.py::test_round_two",
+      "sympy/polys/numberfields/tests/test_primes.py::test_decomp_7"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 0,
+      "fail_pass": 4,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "pr_fix": null,
+    "expected": 4,
+    "unexpected": [],
+    "caught": null,
+    "provable": 0,
+    "skipped": 0
+  },
+  {
+    "kind": "pr_tests",
+    "instance_id": "sympy__sympy-23450",
+    "issue": "",
+    "fix_commit": null,
+    "targets": [
+      "sympy/polys/numberfields/tests/test_primes.py::test_issue_23402"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 0,
+      "fail_pass": 1,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "pr_fix": null,
+    "expected": 1,
+    "unexpected": [],
+    "caught": null,
+    "provable": 0,
+    "skipped": 0
+  },
+  {
+    "kind": "pr_tests",
+    "instance_id": "sympy__sympy-24830",
+    "issue": "",
+    "fix_commit": null,
+    "targets": [
+      "sympy/physics/mechanics/tests/test_joint.py::test_Joint",
+      "sympy/physics/mechanics/tests/test_joint.py::test_pin_joint",
+      "sympy/physics/mechanics/tests/test_joint.py::test_particle_compatibility",
+      "sympy/physics/mechanics/tests/test_joint.py::test_body_compatibility",
+      "sympy/physics/mechanics/tests/test_joint.py::test_pin_joint_double_pendulum",
+      "sympy/physics/mechanics/tests/test_joint.py::test_pin_joint_chaos_pendulum",
+      "sympy/physics/mechanics/tests/test_joint.py::test_prismatic_joint",
+      "sympy/physics/mechanics/tests/test_joint.py::test_prismatic_joint_arbitrary_axis",
+      "sympy/physics/mechanics/tests/test_joint.py::test_spherical_joint",
+      "sympy/physics/mechanics/tests/test_joint.py::test_spherical_joint_speeds_as_derivative_terms",
+      "sympy/physics/mechanics/tests/test_joint.py::test_weld_joint",
+      "sympy/physics/mechanics/tests/test_jointsmethod.py::test_rigid_body_particle_compatibility"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 2,
+      "fail_pass": 10,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "pr_fix": null,
+    "expected": 12,
+    "unexpected": [],
+    "caught": null,
+    "provable": 0,
+    "skipped": 0
+  },
+  {
+    "kind": "pr_tests",
+    "instance_id": "sympy__sympy-25400",
+    "issue": "",
+    "fix_commit": null,
+    "targets": [
+      "sympy/physics/mechanics/tests/test_geometry.py::TestSphere::test_valid_constructor",
+      "sympy/physics/mechanics/tests/test_geometry.py::TestSphere::test_geodesic_length_point_not_on_surface_invalid",
+      "sympy/physics/mechanics/tests/test_geometry.py::TestSphere::test_geodesic_length",
+      "sympy/physics/mechanics/tests/test_geometry.py::TestSphere::test_geodesic_end_vectors",
+      "sympy/physics/mechanics/tests/test_geometry.py::TestSphere::test_geodesic_end_vectors_invalid_coincident",
+      "sympy/physics/mechanics/tests/test_geometry.py::TestSphere::test_geodesic_end_vectors_invalid_diametrically_opposite",
+      "sympy/physics/mechanics/tests/test_geometry.py::TestCylinder::test_valid_constructor",
+      "sympy/physics/mechanics/tests/test_geometry.py::TestCylinder::test_point_is_on_surface",
+      "sympy/physics/mechanics/tests/test_geometry.py::TestCylinder::test_geodesic_length_point_not_on_surface_invalid",
+      "sympy/physics/mechanics/tests/test_geometry.py::TestCylinder::test_geodesic_length",
+      "sympy/physics/mechanics/tests/test_geometry.py::TestCylinder::test_geodesic_end_vectors",
+      "sympy/physics/mechanics/tests/test_geometry.py::TestCylinder::test_geodesic_end_vectors_invalid_coincident",
+      "sympy/physics/mechanics/tests/test_pathway.py::TestLinearPathway::test_is_pathway_base_subclass",
+      "sympy/physics/mechanics/tests/test_pathway.py::TestLinearPathway::test_properties_are_immutable",
+      "sympy/physics/mechanics/tests/test_pathway.py::TestLinearPathway::test_repr",
+      "sympy/physics/mechanics/tests/test_pathway.py::TestWrappingPathway::test_is_pathway_base_subclass",
+      "sympy/physics/mechanics/tests/test_pathway.py::TestWrappingPathway::test_valid_constructor",
+      "sympy/physics/mechanics/tests/test_pathway.py::TestWrappingPathway::test_invalid_constructor_attachments_incorrect_number",
+      "sympy/physics/mechanics/tests/test_pathway.py::TestWrappingPathway::test_invalid_constructor_attachments_not_point",
+      "sympy/physics/mechanics/tests/test_pathway.py::TestWrappingPathway::test_invalid_constructor_geometry_is_not_supplied",
+      "sympy/physics/mechanics/tests/test_pathway.py::TestWrappingPathway::test_invalid_geometry_not_geometry",
+      "sympy/physics/mechanics/tests/test_pathway.py::TestWrappingPathway::test_attachments_property_is_immutable",
+      "sympy/physics/mechanics/tests/test_pathway.py::TestWrappingPathway::test_geometry_property_is_immutable",
+      "sympy/physics/mechanics/tests/test_pathway.py::TestWrappingPathway::test_repr",
+      "sympy/physics/mechanics/tests/test_pathway.py::TestWrappingPathway::test_static_pathway_on_sphere_length",
+      "sympy/physics/mechanics/tests/test_pathway.py::TestWrappingPathway::test_static_pathway_on_cylinder_length",
+      "sympy/physics/mechanics/tests/test_pathway.py::TestWrappingPathway::test_static_pathway_on_sphere_extension_velocity",
+      "sympy/physics/mechanics/tests/test_pathway.py::TestWrappingPathway::test_static_pathway_on_cylinder_extension_velocity",
+      "sympy/physics/mechanics/tests/test_pathway.py::TestWrappingPathway::test_static_pathway_on_sphere_compute_loads",
+      "sympy/physics/mechanics/tests/test_pathway.py::TestWrappingPathway::test_static_pathway_on_cylinder_compute_loads",
+      "sympy/physics/mechanics/tests/test_pathway.py::TestWrappingPathway::test_2D_pathway_on_cylinder_length",
+      "sympy/physics/mechanics/tests/test_pathway.py::TestWrappingPathway::test_2D_pathway_on_cylinder_extension_velocity",
+      "sympy/physics/mechanics/tests/test_pathway.py::TestWrappingPathway::test_2D_pathway_on_cylinder_compute_loads"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 31,
+      "fail_pass": 75,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "pr_fix": null,
+    "expected": 106,
+    "unexpected": [],
+    "caught": null,
+    "provable": 0,
+    "skipped": 0
+  },
+  {
+    "kind": "pr_tests",
+    "instance_id": "sympy__sympy-25735",
+    "issue": "",
+    "fix_commit": null,
+    "targets": [
+      "sympy/utilities/_compilation/tests/test_compilation.py::test_compile_sources"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 1,
+      "fail_pass": 0,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "pr_fix": null,
+    "expected": 1,
+    "unexpected": [],
+    "caught": null,
+    "provable": 0,
+    "skipped": 0
+  },
+  {
+    "kind": "fix_tests",
+    "instance_id": "sympy__sympy-25735",
+    "issue": "F.4",
+    "fix_commit": "30ce30d01914bc0ea372bce707ae93052e2886a3",
+    "targets": [
+      "sympy/utilities/_compilation/tests/test_compilation.py::test_compile_sources"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 1,
+      "fail_pass": 0,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "pr_fix": {
+      "pass_fail": 0,
+      "pass_pass": 1,
+      "fail_pass": 0,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "expected": 0,
+    "unexpected": [],
+    "caught": false,
+    "provable": 0,
+    "skipped": 0
+  },
+  {
+    "kind": "pr_tests",
+    "instance_id": "sympy__sympy-26233",
+    "issue": "",
+    "fix_commit": null,
+    "targets": [
+      "sympy/functions/special/tests/test_error_functions.py::test_ci"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 0,
+      "fail_pass": 1,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "pr_fix": null,
+    "expected": 1,
+    "unexpected": [],
+    "caught": null,
+    "provable": 0,
+    "skipped": 0
+  },
+  {
+    "kind": "fix_tests",
+    "instance_id": "sympy__sympy-26233",
+    "issue": "F.2",
+    "fix_commit": "de7bdfda607690f682185eacbe1ed4591852372f",
+    "targets": [
+      "sympy/functions/special/tests/test_error_functions.py::test_ci"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 0,
+      "fail_pass": 0,
+      "fail_fail": 1,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "pr_fix": {
+      "pass_fail": 0,
+      "pass_pass": 0,
+      "fail_pass": 1,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "expected": 1,
+    "unexpected": [],
+    "caught": true,
+    "provable": 0,
+    "skipped": 0
+  },
+  {
+    "kind": "pr_tests",
+    "instance_id": "sympy__sympy-27688",
+    "issue": "",
+    "fix_commit": null,
+    "targets": [
+      "sympy/solvers/tests/test_polysys.py::test_solve_triangulated"
+    ],
+    "base_pr": {
+      "pass_fail": 0,
+      "pass_pass": 0,
+      "fail_pass": 1,
+      "fail_fail": 0,
+      "flaky": 0,
+      "not_run": 0
+    },
+    "pr_fix": null,
+    "expected": 1,
+    "unexpected": [],
+    "caught": null,
+    "provable": 0,
+    "skipped": 0
+  }
+]

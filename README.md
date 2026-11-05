@@ -245,6 +245,55 @@ Recipes are kept in the `env_recipes` table, and every setup in `setup_runs`.
 
 On the dev set, all 68 PRs from 2022 onward are verified, in 9 repos: 51 with a recipe kept from an earlier PR, 14 with the standard recipe, and 3 with the model's recipes (14 model calls). The 62 dev PRs from 2019–2021 aren't set up yet.
 
+## Differential test runner
+
+The strongest evidence for a finding is a test that passes before the PR and fails after it. The differential runner runs the same tests at a PR's base and at its PR state and compares, test by test:
+
+1. Each set-up PR is installed once at its base and once at its PR state, and both are saved as Docker images (`pr-reviewer-pr:<id>-base` and `-pr`), so later runs start in seconds.
+2. The test files are written into the working copy at both sides, so both run the same test code and only the code under test differs.
+3. Each side's tests run 3 times, with the network off and at most 5 minutes a run. A small pytest plugin, loaded from outside the repo, records each test's result: its exception type, message and failing line. Django's runner output is read instead.
+4. Each test gets one outcome:
+   - **pass→fail:** the PR broke what the test checks. Only this outcome can prove a bug.
+   - **pass→pass, fail→pass, fail→fail:** the other three.
+   - **flaky:** the runs at one side disagreed.
+   - **not run:** a timeout, out of memory, skipped, or never collected.
+
+   Flaky and not-run tests never count as proof, so a timeout can't pass for a failure.
+5. A test method defined in a base class or mixin runs under every test class in the file that inherits it, since pytest never runs it under the base's own name. If pytest stops because a requested test sits in a file that didn't load (a broken import, or `pytest.importorskip()` at the top), those tests count as errors or skips, and the others run again without them.
+
+Each run is stored in the `diff_runs` table under a fingerprint of the images, the test code and the settings. The same test on the same environment is never run twice.
+
+```
+pr-reviewer difftest prepare [--ids <id> ...]          # save each set-up dev PR's base and PR-state images
+pr-reviewer difftest run <id> <test> [<test> ...]     # run tests (node IDs, files or Django labels) at both sides
+pr-reviewer difftest run <id> --file t.py --path pkg/tests/test_new.py   # a test file of your own
+pr-reviewer difftest validate                         # check the runner on known tests
+```
+
+`difftest validate` checks the runner on dev PRs whose tests have a known outcome:
+- a PR's own new or edited tests should go fail→pass or pass→pass, never pass→fail;
+- a known bug's fix commit that adds a test should make that test fail at the PR state and pass at the fix;
+- one PR's related tests in each other repo should stay as they were.
+
+Only the tests the PR or fix added or changed run, found from the diff. The results go to `results/difftest-validation/`. Tests that the repo's own skip marks skip at both sides (such as a missing optional package) are counted apart, as neither expected nor not.
+
+On 28 set-up dev PRs (36 cases, 1,174 tests), from the base to the PR state:
+
+| Kind | Cases | Tests | pass→fail | flaky | not run | skipped | As expected |
+|---|---|---|---|---|---|---|---|
+| PR's own tests | 23 | 857 | 0 | 0 | 0 | 473 | 382 of 384 |
+| related tests | 4 | 141 | 0 | 0 | 0 | 14 | 127 of 127 |
+
+- No false proof: no test went pass→fail, and none was flaky. The 2 unexpected tests (xarray) need dask, which the environment lacks, so they fail the same way at both sides.
+- **Known bugs:** the fixes' tests caught 4 of 9 known bugs (they fail at the PR state and pass at the fix). The other 5 can't show here:
+  - 2 are mistakes in the PR's own test code;
+  - 1 shows only on machines without a C compiler;
+  - 1 needs dask;
+  - 1 fix raised numpy's minimum version, so it doesn't install with the PR's recipe.
+- None of the caught bugs' tests pass at the base, so none shows as pass→fail. They use what the PR itself added, such as a new keyword argument, which the base lacks.
+- The skipped tests are mostly xarray's, which need optional packages (dask and others) that the environments don't install.
+- The 58 prepared images (29 PRs × 2 sides) add about 6.3 GB on top of the environment images they share layers with.
+
 ## Checks
 
 ```
