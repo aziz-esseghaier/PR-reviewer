@@ -3,7 +3,8 @@
 results/<name>/ gets:
 - review_config.json: the run's settings (model, prompt fingerprint, size limit, PRs). In git.
 - review_summary.md: how the run went: PRs reviewed, failed and trimmed, findings by
-  category, model calls and tokens. In git.
+  category, the context the requests held (for reviewers with context), model calls and
+  tokens. In git.
 - raw/reviews.jsonl: one review per PR, the file `pr-reviewer score` reads. Not in git.
 - raw/findings.jsonl: every finding with its claim. Not in git.
 The reviews file is written only once every PR in scope has a review, so a stopped run is
@@ -21,7 +22,9 @@ from typing import Any
 from pr_reviewer.benchmark.dataset import Instance
 from pr_reviewer.benchmark.results import REVIEW_CONFIG
 from pr_reviewer.benchmark.scoring import Prediction, save_predictions
+from pr_reviewer.context.candidates import KIND_ORDER
 from pr_reviewer.core.schemas import CATEGORY_NAMES
+from pr_reviewer.reviewer.contextual import MIN_CONTEXT_CHARS
 from pr_reviewer.reviewer.store import SavedReview
 
 # The run's summary, next to its settings.
@@ -39,6 +42,43 @@ def _write_json(path: Path, data: Any) -> None:
         data (Any): What to write.
     """
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8", newline="\n")
+
+
+def context_lines(done: Sequence[SavedReview]) -> list[str]:
+    """Describe the context the reviews' requests held, as Markdown lines.
+
+    Args:
+        done (Sequence[SavedReview]): The finished reviews.
+
+    Returns:
+        list[str]: A "Context" section, or nothing when no review had a retrieve step.
+    """
+    contexts = [review.context for review in done if review.context is not None]
+    if not contexts:
+        return []
+    with_context = [c for c in contexts if c.get("included")]
+    no_room = sum(1 for c in contexts if c.get("room", 0) < MIN_CONTEXT_CHARS)
+    chars = sorted(int(c.get("chars", 0)) for c in with_context)
+    included = Counter(label.split(" ", 1)[0] for c in contexts for label in c.get("included", []))
+    left_out = Counter(label.split(" ", 1)[0] for c in contexts for label in c.get("left_out", []))
+    lines = [
+        "## Context",
+        "",
+        f"- PRs whose request held context: {len(with_context)} of {len(contexts)}; "
+        f"{no_room} had no room left after the PR's text, "
+        f"{len(contexts) - len(with_context) - no_room} had room but no piece (none found, "
+        "or none small enough)",
+    ]
+    if chars:
+        lines.append(
+            f"- Characters of context: median {chars[len(chars) // 2]:,}, "
+            f"largest {chars[-1]:,}, total {sum(chars):,}"
+        )
+    lines += ["", "| Kind | Pieces in | Pieces left out |", "|---|---|---|"]
+    for kind in KIND_ORDER:
+        lines.append(f"| {kind} | {included[kind]} | {left_out[kind]} |")
+    lines.append("")
+    return lines
 
 
 def summary_markdown(
@@ -109,6 +149,7 @@ def summary_markdown(
         lines += ["## Trimmed PRs", "", "| PR | File diffs left out |", "|---|---|"]
         lines += [f"| {review.instance_id} | {len(review.left_out)} |" for review in trimmed]
         lines.append("")
+    lines += context_lines(done)
     retried = [review for review in saved if review.tries > 1 or review.failures]
     lines += [
         "## Model use",

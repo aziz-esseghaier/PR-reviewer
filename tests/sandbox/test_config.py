@@ -85,3 +85,14 @@ def test_image_tag_follows_the_dockerfile(tmp_path: Path) -> None:
     assert one.tag != two.tag
     second.write_text("FROM x\n", encoding="utf-8")
     assert one.tag == two.tag
+
+
+def test_an_image_built_on_another_follows_its_base(tmp_path: Path) -> None:
+    """Check an image built on another gets a new tag when its base changes, and not without."""
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text("ARG SANDBOX_IMAGE\nFROM ${SANDBOX_IMAGE}\n", encoding="utf-8")
+    plain = ImageSpec("pr-reviewer-indexer", dockerfile)
+    on_a = ImageSpec("pr-reviewer-indexer", dockerfile, "pr-reviewer-sandbox:aaaaaaaaaaaa")
+    on_b = ImageSpec("pr-reviewer-indexer", dockerfile, "pr-reviewer-sandbox:bbbbbbbbbbbb")
+    assert len({plain.tag, on_a.tag, on_b.tag}) == 3
+    assert on_a.tag == ImageSpec("pr-reviewer-indexer", dockerfile, on_a.base).tag

@@ -14,7 +14,9 @@ A PR whose replies are all rejected fails, and gets no review.
 
 The steps run as a LangGraph graph whose state the Postgres checkpointer saves after each
 node, so a run stopped by the daily quota resumes where it stopped. Every model call goes
-through LLMClient: cache, limits, retries and usage log all apply.
+through LLMClient: cache, limits, retries and usage log all apply. Another reviewer can put a
+`retrieve` node before `review` that writes the request itself, such as the context reviewer
+(reviewer/contextual.py); the naive reviewer has none.
 
 Imported by other modules; the file isn't run directly.
 """
@@ -24,7 +26,7 @@ import json
 import operator
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal, TypedDict
+from typing import Annotated, Any, Literal, Protocol, TypedDict
 
 import openai
 from langchain_core.runnables import RunnableConfig
@@ -304,6 +306,8 @@ class NaiveState(TypedDict):
         failed (bool): True when every reply was rejected.
         input_tokens (int): Prompt tokens over all tries.
         output_tokens (int): Reply tokens over all tries, thinking included.
+        context (dict[str, Any] | None): What context the request holds, written by a
+            retrieve node (pack.py PackedContext.summary()); None without one.
         log (list[str]): One line per node run; LangGraph appends new lines.
     """
 
@@ -321,10 +325,30 @@ class NaiveState(TypedDict):
     failed: bool
     input_tokens: int
     output_tokens: int
+    context: dict[str, Any] | None
     log: Annotated[list[str], operator.add]
 
 
 NaiveGraph = CompiledStateGraph[NaiveState, None, NaiveState, NaiveState]
+
+
+class StateNode(Protocol):
+    """A graph node: takes the state, gives the keys it changes."""
+
+    def __call__(self, state: NaiveState) -> dict[str, Any]:
+        """Run the node.
+
+        Args:
+            state (NaiveState): The state before the node.
+
+        Returns:
+            dict[str, Any]: The keys it changes.
+        """
+        ...
+
+
+# A node that writes the request (messages, and what was left out) before the first review.
+RetrieveNode = StateNode
 
 
 def after_review(state: NaiveState) -> Literal["report", "review", "give_up"]:
@@ -382,18 +406,14 @@ def give_up(state: NaiveState) -> dict[str, Any]:
     return {"failed": True, "log": [f"give_up: no usable reply in {state['tries']} tries"]}
 
 
-def build_naive_graph(
-    client: LLMClient, checkpointer: BaseCheckpointSaver[Any] | None = None
-) -> NaiveGraph:
-    """Wire the naive reviewer's nodes and edges into a graph.
+def review_node(client: LLMClient) -> StateNode:
+    """Make the node that asks the model for findings and checks its reply.
 
     Args:
-        client (LLMClient): The reviewer model. One client means one model per run.
-        checkpointer (BaseCheckpointSaver[Any] | None): Where progress is saved after each
-            node. None saves nothing.
+        client (LLMClient): The reviewer model.
 
     Returns:
-        NaiveGraph: The compiled graph.
+        StateNode: The node.
     """
 
     def review(state: NaiveState) -> dict[str, Any]:
@@ -442,11 +462,36 @@ def build_naive_graph(
             "log": [f"review: try {tries}, {source}, {len(claims)} findings"],
         }
 
+    return review
+
+
+def build_naive_graph(
+    client: LLMClient,
+    checkpointer: BaseCheckpointSaver[Any] | None = None,
+    retrieve: RetrieveNode | None = None,
+) -> NaiveGraph:
+    """Wire the reviewer's nodes and edges into a graph.
+
+    Args:
+        client (LLMClient): The reviewer model. One client means one model per run.
+        checkpointer (BaseCheckpointSaver[Any] | None): Where progress is saved after each
+            node. None saves nothing.
+        retrieve (RetrieveNode | None): A node that writes the request before the first
+            review. None for the naive reviewer, whose request is written up front.
+
+    Returns:
+        NaiveGraph: The compiled graph.
+    """
     builder = StateGraph(NaiveState)
-    builder.add_node("review", review)
+    builder.add_node("review", review_node(client))
     builder.add_node("report", report)
     builder.add_node("give_up", give_up)
-    builder.add_edge(START, "review")
+    if retrieve is not None:
+        builder.add_node("retrieve", retrieve)
+        builder.add_edge(START, "retrieve")
+        builder.add_edge("retrieve", "review")
+    else:
+        builder.add_edge(START, "review")
     builder.add_conditional_edges("review", after_review, ["report", "review", "give_up"])
     builder.add_edge("report", END)
     builder.add_edge("give_up", END)
@@ -469,6 +514,8 @@ class PrReview:
         cut (bool): Whether the description or a commit message was shortened.
         full_chars (int): Size of the untrimmed PR text, in characters.
         log (tuple[str, ...]): One line per node run, over all runs of the thread.
+        context (dict[str, Any] | None): What context the request held (room, characters,
+            included and left-out pieces); None for a reviewer without context.
     """
 
     instance_id: str
@@ -482,6 +529,7 @@ class PrReview:
     cut: bool
     full_chars: int
     log: tuple[str, ...]
+    context: dict[str, Any] | None = None
 
     @property
     def trimmed(self) -> bool:
@@ -516,6 +564,7 @@ def _result(values: dict[str, Any]) -> PrReview:
         cut=values["cut"],
         full_chars=values["full_chars"],
         log=tuple(values.get("log", [])),
+        context=values.get("context"),
     )
 
 
@@ -528,6 +577,8 @@ def review_pr(
     sample: int,
     budget_chars: int,
     on_step: Callable[[str], None] | None = None,
+    retrieve: RetrieveNode | None = None,
+    run_name: str = "naive-review",
 ) -> PrReview:
     """Review one PR on a thread: start it, resume it, or give how it ended.
 
@@ -539,6 +590,9 @@ def review_pr(
         sample (int): Which answer to ask the model for (see NaiveState.sample).
         budget_chars (int): The most characters of PR text, from input_budget_chars().
         on_step (Callable[[str], None] | None): Called with each log line as nodes finish.
+        retrieve (RetrieveNode | None): A node that writes the request before the first
+            review (the context reviewer's); None writes the naive request up front.
+        run_name (str): The run's name in traces.
 
     Returns:
         PrReview: The findings and review text, or a failure.
@@ -549,10 +603,10 @@ def review_pr(
             stay saved, so the same thread resumes after them.
     """
     show = on_step or (lambda line: None)
-    graph = build_naive_graph(client, checkpointer)
+    graph = build_naive_graph(client, checkpointer, retrieve)
     config: RunnableConfig = {
         "configurable": {"thread_id": thread_id},
-        "run_name": "naive-review",
+        "run_name": run_name,
         "tags": [client.name],
         "metadata": {"profile": client.name, "instance_id": pr.instance_id},
     }
@@ -568,20 +622,25 @@ def review_pr(
         show(f"(resuming at {', '.join(saved.next)})")
         start = None
     else:
-        messages, fitted = build_messages(pr, budget_chars)
-        if fitted.trimmed:
-            show(
-                f"trimmed: {len(fitted.left_out)} file diffs left out, "
-                f"{len(fitted.text):,} of {fitted.full_chars:,} characters"
-            )
+        messages: list[ChatMessage] = []
+        left_out: list[str] = []
+        cut, full_chars = False, 0
+        if retrieve is None:
+            messages, fitted = build_messages(pr, budget_chars)
+            left_out, cut, full_chars = list(fitted.left_out), fitted.cut, fitted.full_chars
+            if fitted.trimmed:
+                show(
+                    f"trimmed: {len(fitted.left_out)} file diffs left out, "
+                    f"{len(fitted.text):,} of {fitted.full_chars:,} characters"
+                )
         start = NaiveState(
             instance_id=pr.instance_id,
             profile=client.name,
             sample=sample,
             messages=messages,
-            left_out=list(fitted.left_out),
-            cut=fitted.cut,
-            full_chars=fitted.full_chars,
+            left_out=left_out,
+            cut=cut,
+            full_chars=full_chars,
             tries=0,
             feedback="",
             claims=None,
@@ -589,6 +648,7 @@ def review_pr(
             failed=False,
             input_tokens=0,
             output_tokens=0,
+            context=None,
             log=[],
         )
     for update in graph.stream(start, config, stream_mode="updates"):

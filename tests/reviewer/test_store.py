@@ -118,6 +118,19 @@ def test_a_review_is_saved_read_back_and_replaced(migrated: psycopg.Connection[T
     assert row == (True, 4, pytest.approx(0.8))
 
 
+def test_a_review_with_context_records_it(migrated: psycopg.Connection[TupleRow]) -> None:
+    """Check the context columns and summary are saved, and stay empty without context."""
+    save_review(migrated, "run", review(findings=1), failures=0)
+    row = migrated.execute("SELECT context_chars, context_pieces FROM pr_reviews").fetchone()
+    assert row == (None, None)
+    context = {"room": 900, "chars": 400, "included": ["changed a.py:1-9 f"], "left_out": []}
+    with_context = PrReview(**{**vars(review(findings=1)), "context": context})
+    save_review(migrated, "run", with_context, failures=0)
+    row = migrated.execute("SELECT context_chars, context_pieces FROM pr_reviews").fetchone()
+    assert row == (400, 1)
+    assert load_reviews(migrated, "run")[PR_ID].context == context
+
+
 def test_a_failed_review_keeps_its_count(migrated: psycopg.Connection[TupleRow]) -> None:
     """Check a failed review is saved with no findings and its failure count."""
     save_review(migrated, "run", review(findings=0, ok=False), failures=1)

@@ -26,6 +26,10 @@ How to run (inside the conda env, from the project folder):
                                               (--since <year> scores only the PRs from that year on)
     pr-reviewer review naive                  review the dev PRs from 2022 on from the diff alone
                                               (the baseline reviewer), ready to score
+    pr-reviewer context build | check         find each dev PR's context in the repo (Docker),
+                                              and check it reached the known issues' code
+    pr-reviewer review context | compare      review with that context, and compare the scored
+                                              run with the naive one
     pr-reviewer sandbox build | repos | check | status | cleanup
                                               build the sandbox images, download the dev PRs'
                                               repos, check their checkouts, show or clean up
@@ -109,6 +113,8 @@ from pr_reviewer.benchmark.split import (
     split_path,
     split_prs,
 )
+from pr_reviewer.context.commands import add_commands as add_context_commands
+from pr_reviewer.context.retrieve import ContextError
 from pr_reviewer.core.cache import PostgresCache, cache_stats
 from pr_reviewer.core.config import (
     ConfigError,
@@ -874,6 +880,7 @@ def build_parser() -> argparse.ArgumentParser:
     score.set_defaults(handler=_score)
 
     add_review_commands(commands, data_option)
+    add_context_commands(commands, data_option)
     add_sandbox_commands(commands, data_option)
     add_setup_commands(commands, data_option)
     add_difftest_commands(commands, data_option)
@@ -923,6 +930,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Benchmark data problem: {exc}", file=sys.stderr)
     except (SandboxError, ImageError) as exc:
         print(f"Sandbox problem: {exc}", file=sys.stderr)
+    except ContextError as exc:
+        print(f"Context problem: {exc}", file=sys.stderr)
     finally:
         flush_traces()
     return 1

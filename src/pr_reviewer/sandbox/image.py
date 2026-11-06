@@ -1,10 +1,12 @@
-"""The two images: the sandbox (docker/sandbox/Dockerfile) and the proxy (docker/proxy/Dockerfile).
+"""The images: the sandbox (docker/sandbox/Dockerfile), the proxy (docker/proxy/Dockerfile),
+and images built on top of the sandbox, such as the indexer (docker/indexer/Dockerfile).
 
 An image's tag is the first 12 characters of its Dockerfile's SHA-256 fingerprint, such as
 pr-reviewer-sandbox:3f1a9c0e2b7d. Editing a Dockerfile gives a new tag, so a stale image is
 never used by mistake, and an unchanged one is never rebuilt. Docker reuses the steps it has
 already built, so a rebuild after a small edit is quick; the first sandbox build downloads git
-and Python and took about 11 minutes on a slow connection.
+and Python and took about 11 minutes on a slow connection. An image built on another one gets
+that image's tag as the build argument SANDBOX_IMAGE, and the tag is part of its fingerprint.
 
 Imported by other modules; the file isn't run directly.
 """
@@ -39,15 +41,21 @@ class ImageSpec:
     Attributes:
         name (str): The image name, without a tag, such as "pr-reviewer-sandbox".
         dockerfile (Path): The Dockerfile. Its folder is all Docker receives when building.
+        base (str): The name and tag of the image it's built on, passed to the build as
+            SANDBOX_IMAGE; "" for an image built from a public one.
     """
 
     name: str
     dockerfile: Path
+    base: str = ""
 
     @property
     def tag(self) -> str:
         """The name and tag the current Dockerfile builds, such as "pr-reviewer-sandbox:3f1a..."."""
-        digest = hashlib.sha256(self.dockerfile.read_bytes()).hexdigest()[:12]
+        content = self.dockerfile.read_bytes()
+        if self.base:
+            content += b"\nbase " + self.base.encode()
+        digest = hashlib.sha256(content).hexdigest()[:12]
         return f"{self.name}:{digest}"
 
 
@@ -117,6 +125,8 @@ def build_image(
     tag = spec.tag
     if image_exists(client, tag):
         return tag
+    if spec.base and not image_exists(client, spec.base):
+        raise ImageError(f"Building {tag} needs {spec.base}, which isn't built")
     # The low-level call streams the build output as it happens.
     stream = client.api.build(
         path=str(spec.dockerfile.parent),
@@ -125,6 +135,7 @@ def build_image(
         forcerm=True,
         decode=True,
         labels={"pr-reviewer.dockerfile": tag.rsplit(":", 1)[1]},
+        buildargs={"SANDBOX_IMAGE": spec.base} if spec.base else None,
     )
     for chunk in stream:
         if "error" in chunk:

@@ -1,0 +1,14 @@
+{
+  "max_piece_chars": 11959,
+  "callers": 5,
+  "tests": 3,
+  "short_lines": 30,
+  "doc_lines": 10,
+  "jedi_seconds": 120.0,
+  "jedi_call_seconds": 10.0,
+  "since": 2022,
+  "indexer_image": "pr-reviewer-indexer:b6cc5f849735",
+  "probe_version": 1,
+  "settings_key": "b7301b7a8a6f3a96ead437c4257d6030b487d6116626374d8a5b2a17a1a656ef",
+  "date": "2026-11-06"
+}

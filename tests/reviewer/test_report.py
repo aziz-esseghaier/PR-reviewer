@@ -99,3 +99,26 @@ def test_a_finished_run_writes_one_review_per_pr(tmp_path: Path) -> None:
     assert "| F.4 | Check | 1 |" in summary
     assert f"| {PRS[1].instance_id} | 1 |" in summary
     assert "1 PRs trimmed" in summary
+    assert "## Context" not in summary
+
+
+def test_a_context_run_summarizes_its_context(tmp_path: Path) -> None:
+    """Check the Context section: PRs with context, no room, characters and pieces by kind."""
+    held = {
+        "room": 8000,
+        "chars": 3000,
+        "included": ["changed a.py:1-9 f", "caller b.py:3-8 g"],
+        "left_out": ["test t.py:1-90 test_f"],
+    }
+    full = {"room": 0, "chars": 0, "included": [], "left_out": ["caller b.py:3-8 g"]}
+    one, two = saved(1), saved(2)
+    reviews = {
+        one.instance_id: SavedReview(**{**vars(one), "context": held}),
+        two.instance_id: SavedReview(**{**vars(two), "context": full}),
+    }
+    write_review_files(tmp_path, {**SETTINGS, "reviewer": "context"}, PRS, reviews, FINDINGS)
+    summary = (tmp_path / REVIEW_SUMMARY).read_text(encoding="utf-8")
+    assert "PRs whose request held context: 1 of 2; 1 had no room left" in summary
+    assert "Characters of context: median 3,000, largest 3,000, total 3,000" in summary
+    assert "| caller | 1 | 1 |" in summary
+    assert "| test | 0 | 1 |" in summary

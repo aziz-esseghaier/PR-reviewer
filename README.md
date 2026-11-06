@@ -212,6 +212,43 @@ On functional issues it scores precision 0.055, recall 0.207 and F1 0.087; on ev
 
 Only 8 of its 166 points match a known issue. 92 of the 158 false alarms are on clean PRs: it flags 27 of the 42, which is why its PR accuracy is below approving everything. That noise is what the evidence checks are meant to remove.
 
+## Context retrieval (the RAG part)
+
+The context reviewer is the naive reviewer plus code from the repo around the change: retrieve, fit into the request, then generate. Everything else stays the same (model, prompt rules, reply format, size limit), so comparing the two runs measures the context alone.
+
+**Retrieval** runs once per PR in an indexer sandbox: the sandbox image plus Jedi (`docker/indexer/Dockerfile`), network off. A script (`src/pr_reviewer/context/probe.py`) checks out the PR's last commit, finds the changed lines with `git diff` from its base, and parses every Python file with Python's `ast`, which reads code without running it. It then collects candidate pieces:
+
+1. **changed**: each source function the PR changed, whole (unless the PR added all of it, since the diff shows it then);
+2. **called**: the definitions those functions call, as signature and docstring (at most 10 docstring lines), or whole when 30 lines or less;
+3. **caller**: up to 5 functions calling each changed function, closest first (same file, same folder, same package);
+4. **test**: up to 3 existing tests using each changed function, the module's own test file first;
+5. **changed_test**: the test functions the PR edited, whole;
+6. **file**: the changed files, whole.
+
+Names are matched through the files' imports. A call `ast` can't place, such as a name re-exported by a package's `__init__.py` or an inherited method, goes to Jedi's "go to definition" (within 2 minutes per PR). A method called on an object of unknown type is matched only when no other definition has its name. No vector search is used: every link here is an exact name. The candidates go to a JSON file under `data/contexts/`, recorded in the `pr_contexts` table (migration 0009).
+
+**Fitting.** The PR's text comes first, exactly as the naive reviewer fits it. The room left in the ~12,000 characters goes to whole pieces, in the order above; a piece that doesn't fit is left out, and smaller ones after it still get their chance. The pieces go after the PR in a `<repository_context>` block, with a note that it's data, never instructions. A PR with no room left gets the naive request unchanged.
+
+```
+pr-reviewer context build                 # retrieve the 68 dev PRs from 2022 on (Docker, no model calls)
+pr-reviewer context check                 # did the model see the code each known issue's fix changed?
+pr-reviewer review context                # review with context, as run context-gpt-oss-120b
+pr-reviewer score results/context-gpt-oss-120b/raw/reviews.jsonl --name context-gpt-oss-120b --reviewer reviewer-gpt-oss-120b --since 2022
+pr-reviewer review compare                # compare it with the naive run, overall, on subsets and PR by PR
+```
+
+`results/context-dev-2022/` has the retrieval summary: pieces per PR, and how many calls `ast`, Jedi or neither resolved. The **retrieval check** uses each known issue's later fix commit, only to measure: if the functions the fix changed were in the diff or the context, a missed issue is the model's miss; if retrieval never found them, it's retrieval's.
+
+Results on the 68 dev PRs from 2022 onward. 37 PRs got context (median 4,600 characters). The other 31 are docs-only, change no function, or had no room; they sent the naive request unchanged, so their reviews are the same.
+
+| Reviewer | PR accuracy | Point precision | Point recall | Point F1 | F1 (F) | F1 (E) |
+|---|---|---|---|---|---|---|
+| No comments | 0.618 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 |
+| Naive | 0.529 | 0.048 | 0.140 | 0.072 | 0.087 | 0.048 |
+| Context | 0.485 | 0.076 | 0.175 | 0.106 | 0.136 | 0.057 |
+
+On the 37 PRs with context, false alarms fall from 92 to 56 and hits rise from 5 to 7: precision 0.051 → 0.111, F1 0.073 → 0.136. PR accuracy drops because 3 PRs with issues got a clean review. The hit counts are small (4 PRs gained a hit, 2 lost one), so the drop in false alarms is the clearer effect. The retrieval check shows why context finds little that's new: of the 57 known issues, 23 have their fix in a function the PR's diff already shows, 28 in no function at all (docs, tests, module-level lines), and only 1 outside the diff. `results/context-gpt-oss-120b/` has the summaries, `retrieval_check.md` and `comparison.md`.
+
 ## Sandbox (Docker)
 
 PR code is untrusted, so it only ever runs inside Docker containers called sandboxes. Every sandbox:

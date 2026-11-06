@@ -68,6 +68,9 @@ GRACE_SECONDS = 30
 # Most output kept in memory per command. The log file keeps all of it.
 OUTPUT_LIMIT = 1_000_000
 
+# Biggest file read_file() copies out of a sandbox.
+READ_LIMIT = 50_000_000
+
 # The kernel counts memory kills here (cgroup v2, seen from inside the container).
 MEMORY_EVENTS = "/sys/fs/cgroup/memory.events"
 
@@ -551,6 +554,39 @@ class Sandbox:
             raise SandboxError(f"Can't write files to {folder}: {exc}") from None
         if not ok:
             raise SandboxError(f"Can't write files to {folder}")
+
+    def read_file(self, path: str, max_bytes: int = READ_LIMIT) -> bytes:
+        """Copy one file out of the sandbox.
+
+        Unlike a command's output, the file isn't cut at OUTPUT_LIMIT.
+
+        Args:
+            path (str): The file's absolute path inside the sandbox.
+            max_bytes (int): Most bytes accepted; a bigger file is refused.
+
+        Returns:
+            bytes: The file's content.
+
+        Raises:
+            SandboxError: If the file is missing, isn't a regular file, is too big, or Docker
+                refuses.
+        """
+        try:
+            stream, stat = self._live().get_archive(path)
+            if int((stat or {}).get("size", 0)) > max_bytes:
+                raise SandboxError(f"{path} is bigger than {max_bytes:,} bytes")
+            archive = b"".join(stream)
+        except docker.errors.NotFound:
+            raise SandboxError(f"{path} isn't in the sandbox") from None
+        except DOCKER_ERRORS as exc:
+            raise SandboxError(f"Can't read {path}: {exc}") from None
+        with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
+            member = tar.next()
+            if member is None or not member.isfile():
+                raise SandboxError(f"{path} isn't a regular file")
+            extracted = tar.extractfile(member)
+            assert extracted is not None
+            return extracted.read()
 
     def _live(self) -> Container:
         """Get the container, checking it's still running.

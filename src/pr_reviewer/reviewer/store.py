@@ -1,8 +1,9 @@
-"""Review runs in PostgreSQL (migration 0008): each PR's review, and every finding.
+"""Review runs in PostgreSQL (migrations 0008 and 0009): each PR's review, and every finding.
 
 A run is a reviewer going over a set of PRs under one name, with fixed settings. Each PR's
 latest review is kept in pr_reviews, and its findings in findings, so a stopped run knows which
-PRs are done, and later results can be counted by category, file or confidence with SQL.
+PRs are done, and later results can be counted by category, file or confidence with SQL. A
+review with context also records how many characters and pieces of context its request held.
 
 Imported by other modules; the file isn't run directly.
 """
@@ -124,7 +125,16 @@ def save_review(
         result (PrReview): How the review ended.
         failures (int): How many reviews of this PR have failed, this one included.
     """
-    details = {"left_out": list(result.left_out), "cut": result.cut, "log": list(result.log)}
+    details: dict[str, Any] = {
+        "left_out": list(result.left_out),
+        "cut": result.cut,
+        "log": list(result.log),
+    }
+    context_chars = context_pieces = None
+    if result.context is not None:
+        details["context"] = result.context
+        context_chars = int(result.context.get("chars", 0))
+        context_pieces = len(result.context.get("included", []))
     with conn.transaction(), conn.cursor() as cursor:
         cursor.execute(
             "DELETE FROM pr_reviews WHERE run = %s AND instance_id = %s",
@@ -133,8 +143,9 @@ def save_review(
         cursor.execute(
             """
             INSERT INTO pr_reviews (run, instance_id, status, failures, tries, findings, trimmed,
-                                    input_tokens, output_tokens, review, details)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                    input_tokens, output_tokens, review, details,
+                                    context_chars, context_pieces)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 run,
@@ -148,6 +159,8 @@ def save_review(
                 result.output_tokens,
                 result.review,
                 Jsonb(details),
+                context_chars,
+                context_pieces,
             ),
         )
         cursor.executemany(
@@ -176,6 +189,8 @@ class SavedReview:
         output_tokens (int): Reply tokens.
         review (str): The review text.
         left_out (tuple[str, ...]): File diffs left out to fit.
+        context (dict[str, Any] | None): What context the request held (room, characters,
+            included and left-out pieces); None for a reviewer without context.
     """
 
     instance_id: str
@@ -188,6 +203,7 @@ class SavedReview:
     output_tokens: int
     review: str
     left_out: tuple[str, ...]
+    context: dict[str, Any] | None = None
 
 
 def load_reviews(conn: psycopg.Connection[TupleRow], run: str) -> dict[str, SavedReview]:
@@ -232,6 +248,7 @@ def load_reviews(conn: psycopg.Connection[TupleRow], run: str) -> dict[str, Save
             output_tokens=output_tokens,
             review=review,
             left_out=tuple(details.get("left_out", [])),
+            context=details.get("context"),
         )
     return reviews
 
