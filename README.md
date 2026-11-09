@@ -249,6 +249,59 @@ Results on the 68 dev PRs from 2022 onward. 37 PRs got context (median 4,600 cha
 
 On the 37 PRs with context, false alarms fall from 92 to 56 and hits rise from 5 to 7: precision 0.051 → 0.111, F1 0.073 → 0.136. PR accuracy drops because 3 PRs with issues got a clean review. The hit counts are small (4 PRs gained a hit, 2 lost one), so the drop in false alarms is the clearer effect. The retrieval check shows why context finds little that's new: of the 57 known issues, 23 have their fix in a function the PR's diff already shows, 28 in no function at all (docs, tests, module-level lines), and only 1 outside the diff. `results/context-gpt-oss-120b/` has the summaries, `retrieval_check.md` and `comparison.md`.
 
+## Candidates and static tools
+
+The candidate stage aims at recall. Its job is to list every problem that might be real, because a later stage checks each candidate with evidence and drops the false ones. Missing a real problem here costs more than listing a wrong one.
+
+**Static tools.** ruff, mypy, bandit and semgrep run on each PR's changed Python files. They run inside the PR's prepared image from the differential runner, at its last commit, network off. mypy runs with the environment's own Python and installed packages, so it sees the real types of the libraries the code uses.
+- The tools live in their own image (`docker/tools/Dockerfile`), pinned by version and SHA-256. A copy of `/opt/tools` sits in a Docker volume that each static sandbox attaches read-only, so the PR's image stays unchanged.
+- The rules are the same for every repo and ignore the repo's own settings:
+  - ruff: pyflakes, bugbear and pylint's errors (`F,B,PLE`);
+  - mypy: its defaults plus `--check-untyped-defs`, since most of these repos don't annotate their functions;
+  - bandit: medium severity and up;
+  - semgrep: the Python correctness and security rules of [semgrep-rules](https://github.com/semgrep/semgrep-rules) at a fixed commit (Semgrep Rules License).
+- Warnings on lines the PR added or changed go to the `static_warnings` table (migration 0010). Every warning on the changed files stays in a JSON file under `data/static/`.
+
+**The reviewer.** It is a LangGraph graph with one lookup round:
+1. **The request.** It holds the PR's text (fitted as before), then the static warnings on changed lines as hints, then the retrieved context in the room left. Each part sits in its own tagged block, and tags inside any part are swapped for look-alikes.
+2. **First reply.** The model replies with up to 15 candidates, or asks once for up to 4 lookups in the repo at the PR's last commit:
+   - `read_file`: up to 60 lines of a file;
+   - `search_symbol`: where a name is defined and called.
+   The model only proposes lookups as JSON. Our code checks each one: a path must stay inside the repo, a name must be a Python name. It then answers them in an indexer sandbox with `ast`, network off (`context/lookup_tool.py`).
+3. **Final reply.** The answers go into a final request, and the model must then reply with candidates.
+
+One round keeps a PR at two calls at most, since each request nearly fills Groq's 8,000 tokens a minute.
+
+```
+pr-reviewer static run                    # the static tools on the 68 dev PRs from 2022 on (Docker; prepares PR images first)
+pr-reviewer review candidates --with-issues --variant v2 --name candidates-gpt-oss-120b-v2
+                                          # tune on the 26 PRs with known issues (recall depends only on them)
+pr-reviewer score results/candidates-gpt-oss-120b-v2/raw/reviews.jsonl --name candidates-gpt-oss-120b-v2 --reviewer reviewer-gpt-oss-120b --since 2022 --with-issues
+pr-reviewer review candidates --variant v1 # the final run on all 68, as candidates-gpt-oss-120b
+pr-reviewer review compare --base context-gpt-oss-120b --new candidates-gpt-oss-120b
+```
+
+`results/static-dev-2022/` has the static summary: each tool's runs, warnings on the changed files and on changed lines, and rules.
+
+**Tuning.** Two prompt variants ran on the 26 dev PRs with known issues. v1 asks for every problem that might be real. v2 also lists what to look for in each kind of problem, rules out an empty list, and drops a malformed candidate instead of rejecting the whole reply. Both found 12 of the 57 known issues, but v2 raised 107 false alarms against v1's 71, so the final run uses v1.
+
+Results on the 68 dev PRs from 2022 onward:
+
+| Reviewer | PR accuracy | Point precision | Point recall | Point F1 | Recall (F) | Recall (E) |
+|---|---|---|---|---|---|---|
+| No comments | 0.618 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 |
+| Naive | 0.529 | 0.048 | 0.140 | 0.072 | 0.207 | 0.074 |
+| Context | 0.485 | 0.076 | 0.175 | 0.106 | 0.276 | 0.074 |
+| Candidates | 0.529 | 0.059 | 0.210 | 0.092 | 0.379 | 0.036 |
+
+Recall rises from 10 to 12 hits, mostly on functional issues (8 → 11); precision falls, as expected for this stage. The counts are small, so one hit moves recall by 0.018.
+- **Where it gains:** on the 32 PRs that got no retrieved context, hits go from 1 to 5. On the 36 with context, they go from 9 to 7.
+- **Static warnings** landed on changed lines in only 7 PRs, two of them with known issues: sphinx-12491 got no hit, and sympy-26233 already had its hit in the context run, which showed no warnings. On sympy-24563 (clean) and sympy-26233, most candidates sat on warned lines, so the warnings mostly added false alarms.
+- **Lookups** were asked on 11 PRs (1 hit there).
+- **Clean PRs:** 123 false alarms on the 42 clean PRs (80 with context); 14 clean PRs got no candidate.
+
+A full run uses about 355,000 tokens, close to two days of Groq's free quota. `results/candidates-gpt-oss-120b/` has the summaries and `comparison.md`; the tuning runs are in `results/candidates-gpt-oss-120b-v1/` and `-v2/`.
+
 ## Sandbox (Docker)
 
 PR code is untrusted, so it only ever runs inside Docker containers called sandboxes. Every sandbox:

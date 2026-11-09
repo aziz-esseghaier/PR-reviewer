@@ -1,0 +1,65 @@
+{
+  "name": "candidates-gpt-oss-120b-v2",
+  "reviewer": "candidates",
+  "split": "dev",
+  "since": 2022,
+  "profile": "reviewer-gpt-oss-120b",
+  "provider": "groq",
+  "model": "openai/gpt-oss-120b",
+  "temperature": 0.0,
+  "max_tokens": 3000,
+  "reasoning_effort": "medium",
+  "tokens_per_minute": 8000,
+  "input_budget_chars": 10297,
+  "max_findings": 15,
+  "max_tries": 3,
+  "prompt_sha256": "1ecab8a92c45749ecf8a3a90b2fc2418d8019b09a489f3c23db31c8b12715186",
+  "dataset_sha256": "7048e7a92ea9f7a1e6812646694a040582448cc1dd9d515264a4b55071aff95d",
+  "split_sha256": "902988f742372825324e3d042d64a8eeca4cc142fb9546e57dcb6084daffd3c2",
+  "with_issues": true,
+  "variant": "v2",
+  "lookups": {
+    "max_lookups": 4,
+    "min_room": 1500,
+    "room": 8000,
+    "read_lines": 60,
+    "max_defs": 8,
+    "max_uses": 15,
+    "max_chars": 2000
+  },
+  "context": {
+    "max_piece_chars": 11959,
+    "callers": 5,
+    "tests": 3,
+    "short_lines": 30,
+    "doc_lines": 10,
+    "jedi_seconds": 120.0,
+    "jedi_call_seconds": 10.0,
+    "settings_key": "b7301b7a8a6f3a96ead437c4257d6030b487d6116626374d8a5b2a17a1a656ef",
+    "indexer_image": "pr-reviewer-indexer:b6cc5f849735",
+    "probe_version": 1,
+    "order": [
+      "changed",
+      "called",
+      "caller",
+      "test",
+      "changed_test",
+      "file"
+    ],
+    "min_context_chars": 300
+  },
+  "static": {
+    "ruff_select": "F,B,PLE",
+    "bandit_severity": "medium",
+    "semgrep_rules": "correctness and security",
+    "mypy_flags": [
+      "--ignore-missing-imports",
+      "--check-untyped-defs"
+    ],
+    "tool_minutes": 10.0,
+    "settings_key": "8a38fc0f23f0543f08d8ac7c5166bdf64e1e6d5800555ce28b41e49d3704451f",
+    "tools_image": "pr-reviewer-tools:f9bab73f9ba7"
+  },
+  "date": "2026-11-08",
+  "prs": 26
+}

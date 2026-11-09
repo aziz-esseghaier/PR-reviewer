@@ -43,11 +43,14 @@ class ImageSpec:
         dockerfile (Path): The Dockerfile. Its folder is all Docker receives when building.
         base (str): The name and tag of the image it's built on, passed to the build as
             SANDBOX_IMAGE; "" for an image built from a public one.
+        files (tuple[str, ...]): Other files in the Dockerfile's folder the build copies in,
+            such as "requirements.txt". They're part of the fingerprint too.
     """
 
     name: str
     dockerfile: Path
     base: str = ""
+    files: tuple[str, ...] = ()
 
     @property
     def tag(self) -> str:
@@ -55,6 +58,8 @@ class ImageSpec:
         content = self.dockerfile.read_bytes()
         if self.base:
             content += b"\nbase " + self.base.encode()
+        for name in self.files:
+            content += f"\nfile {name}\n".encode() + (self.dockerfile.parent / name).read_bytes()
         digest = hashlib.sha256(content).hexdigest()[:12]
         return f"{self.name}:{digest}"
 

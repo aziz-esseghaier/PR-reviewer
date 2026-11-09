@@ -3,9 +3,11 @@
 Both runs must be scored (`pr-reviewer score`), so each results folder holds the judge's
 judgment of every PR (raw/swrbench_output.json); no judge is called again. Metrics on a
 subset of PRs use the formulas of SWR-Bench's analyze_result(): PR-level accuracy, point-level
-precision, recall and F1, and F1 over functional (F) and evolvability (E) points. They're
-computed here because analyze_result() itself divides by zero on a subset with no PR with
-issues; on all PRs, they're checked against analyze_result()'s own numbers.
+precision, recall and F1, and recall and F1 over functional (F) and evolvability (E) points.
+They're computed here because analyze_result() itself divides by zero on a subset with no PR
+with issues; on all PRs, they're checked against analyze_result()'s own numbers. A run over
+some of the base run's PRs (such as only those with known issues) is compared with the base
+run on those PRs.
 
 Imported by other modules; the file isn't run directly.
 """
@@ -40,6 +42,8 @@ class SubsetMetrics:
         f1_evolvability (float): F1 over evolvability (E) points and issues.
         hits (int): Points that matched a known issue.
         false_alarms (int): Points that matched none.
+        recall_functional (float): Recall over functional (F) issues.
+        recall_evolvability (float): Recall over evolvability (E) issues.
     """
 
     prs: int
@@ -51,6 +55,8 @@ class SubsetMetrics:
     f1_evolvability: float
     hits: int
     false_alarms: int
+    recall_functional: float = 0.0
+    recall_evolvability: float = 0.0
 
 
 def _prf1(tp: int, fp: int, fn: int) -> tuple[float, float, float]:
@@ -120,18 +126,20 @@ def subset_metrics(
     by_kind = []
     for letter in ("F", "E"):
         types = [code for code in categories if code.startswith(letter)]
-        counts = [_type_counts(judgment, types) for judgment in judgments]
-        by_kind.append(_prf1(*(sum(column) for column in zip(*counts, strict=True)))[2])
+        counts = [_type_counts(judgment, types) for judgment in judgments] or [(0, 0, 0)]
+        by_kind.append(_prf1(*(sum(column) for column in zip(*counts, strict=True))))
     return SubsetMetrics(
         prs=len(scores),
         accuracy=right / len(scores) if scores else 0.0,
         precision=precision,
         recall=recall,
         f1=f1,
-        f1_functional=by_kind[0],
-        f1_evolvability=by_kind[1],
+        f1_functional=by_kind[0][2],
+        f1_evolvability=by_kind[1][2],
         hits=hits,
         false_alarms=false_alarms,
+        recall_functional=by_kind[0][1],
+        recall_evolvability=by_kind[1][1],
     )
 
 
@@ -166,6 +174,8 @@ def check_against_official(judgments: Sequence[dict[str, Any]], ours: SubsetMetr
         official["overall"]["f1_point"],
         official["change_by_F"]["f1"],
         official["change_by_E"]["f1"],
+        official["change_by_F"]["recall"],
+        official["change_by_E"]["recall"],
     )
     mine = (
         ours.accuracy,
@@ -174,6 +184,8 @@ def check_against_official(judgments: Sequence[dict[str, Any]], ours: SubsetMetr
         ours.f1,
         ours.f1_functional,
         ours.f1_evolvability,
+        ours.recall_functional,
+        ours.recall_evolvability,
     )
     if any(abs(a - b) > 1e-9 for a, b in zip(mine, theirs, strict=True)):
         raise RuntimeError(f"Subset metrics {mine} don't match SWR-Bench's {theirs}")
@@ -210,9 +222,28 @@ def _row(label: str, metrics: SubsetMetrics) -> str:
     """
     return (
         f"| {label} | {metrics.accuracy:.3f} | {metrics.precision:.3f} | "
-        f"{metrics.recall:.3f} | {metrics.f1:.3f} | {metrics.f1_functional:.3f} | "
+        f"{metrics.recall:.3f} | {metrics.f1:.3f} | {metrics.recall_functional:.3f} | "
+        f"{metrics.f1_functional:.3f} | {metrics.recall_evolvability:.3f} | "
         f"{metrics.f1_evolvability:.3f} | {metrics.hits} | {metrics.false_alarms} |"
     )
+
+
+def same_prs(
+    base: dict[str, dict[str, Any]], new: dict[str, dict[str, Any]]
+) -> dict[str, dict[str, Any]]:
+    """Keep the base run's judgments of the PRs the new run scored.
+
+    Args:
+        base (dict[str, dict[str, Any]]): The base run's judgments, by PR.
+        new (dict[str, dict[str, Any]]): The new run's judgments, by PR.
+
+    Returns:
+        dict[str, dict[str, Any]]: The base run's judgments of the new run's PRs, or all of
+        them when the new run scored a PR the base run didn't (the comparison then refuses).
+    """
+    if not set(new) <= set(base):
+        return base
+    return {instance_id: base[instance_id] for instance_id in new}
 
 
 def comparison_markdown(
@@ -220,7 +251,7 @@ def comparison_markdown(
     new_name: str,
     base: dict[str, dict[str, Any]],
     new: dict[str, dict[str, Any]],
-    with_context: Collection[str],
+    subsets: Sequence[tuple[str, Collection[str]]] = (),
 ) -> str:
     """Compare two scored runs on the same PRs, as Markdown.
 
@@ -229,7 +260,8 @@ def comparison_markdown(
         new_name (str): The run being measured.
         base (dict[str, dict[str, Any]]): The base run's judgments, by PR.
         new (dict[str, dict[str, Any]]): The new run's judgments, by PR.
-        with_context (Collection[str]): The PRs whose request in the new run held context.
+        subsets (Sequence[tuple[str, Collection[str]]]): Subsets to show besides all PRs, as
+            (label, PRs), such as ("with context", ...). The label gets the PR count in front.
 
     Returns:
         str: The text of comparison.md.
@@ -241,8 +273,6 @@ def comparison_markdown(
     if set(base) != set(new):
         raise DatasetError(f"{base_name} and {new_name} scored different PRs")
     ids = sorted(new)
-    held = [i for i in ids if i in with_context]
-    others = [i for i in ids if i not in with_context]
     categories = official_categories()
     for judgments in (base, new):
         everything = [judgments[i] for i in ids]
@@ -254,20 +284,19 @@ def comparison_markdown(
         "SWR-Bench's formulas over that subset's judgments (no new judge call); on all PRs "
         "they match SWR-Bench's own numbers.",
         "",
-        "| PRs | Run | Accuracy | Precision | Recall | F1 | F1 (F) | F1 (E) | Hits | "
-        "False alarms |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "| PRs | Run | Accuracy | Precision | Recall | F1 | Recall (F) | F1 (F) | Recall (E) "
+        "| F1 (E) | Hits | False alarms |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
-    subsets = [
-        (f"All {len(ids)}", ids),
-        (f"{len(held)} with context", held),
-        (f"{len(others)} without context", others),
-    ]
+    rows = [(f"All {len(ids)}", ids)]
     for label, members in subsets:
-        if not members:
+        chosen = [i for i in ids if i in members]
+        rows.append((f"{len(chosen)} {label}", chosen))
+    for label, chosen in rows:
+        if not chosen:
             continue
         for name, run in ((base_name, base), (new_name, new)):
-            metrics = subset_metrics([run[i] for i in members], categories)
+            metrics = subset_metrics([run[i] for i in chosen], categories)
             lines.append(_row(f"{label} | {name}", metrics))
     lines += ["", *pr_changes(base_name, new_name, base, new, ids)]
     return "\n".join(lines) + "\n"

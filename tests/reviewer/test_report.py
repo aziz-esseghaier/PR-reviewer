@@ -122,3 +122,33 @@ def test_a_context_run_summarizes_its_context(tmp_path: Path) -> None:
     assert "Characters of context: median 3,000, largest 3,000, total 3,000" in summary
     assert "| caller | 1 | 1 |" in summary
     assert "| test | 0 | 1 |" in summary
+
+
+def test_a_candidate_run_summarizes_warnings_and_lookups(tmp_path: Path) -> None:
+    """Check the Candidate stage section, and a lookup round not counted as a retry."""
+    asked = {
+        "variant": "v1",
+        "static_status": "ok",
+        "warnings": 3,
+        "warnings_shown": 2,
+        "lookups_allowed": True,
+        "lookups": ["read_file pkg/a.py 1-9", "search_symbol f"],
+        "lookups_found": 1,
+        "discarded": 2,
+    }
+    plain = {**asked, "static_status": "failed", "warnings": 0, "warnings_shown": 0}
+    plain.update(lookups=[], lookups_found=0, discarded=0, lookups_allowed=False)
+    one, two = saved(1), saved(2)
+    reviews = {
+        one.instance_id: SavedReview(**{**vars(one), "tries": 2, "details": {"candidates": asked}}),
+        two.instance_id: SavedReview(**{**vars(two), "details": {"candidates": plain}}),
+    }
+    settings = {**SETTINGS, "reviewer": "candidates"}
+    write_review_files(tmp_path, settings, PRS, reviews, FINDINGS)
+    summary = (tmp_path / REVIEW_SUMMARY).read_text(encoding="utf-8")
+    assert "characters of request text (PR, warnings, lookups, context)" in summary
+    assert "Prompt variant: v1; candidates per PR: median 1, most 1" in summary
+    assert "ran on 1 PRs, no Python line changed on 0, failed on 1; 3 warnings" in summary
+    assert "allowed on 1 PRs (the others had no room left), asked on 1; 2 lookups" in summary
+    assert "(1 read_file, 1 search_symbol), 1 found something; 2 candidates" in summary
+    assert "Model calls: 3 (0 PRs needed more than one try)" in summary

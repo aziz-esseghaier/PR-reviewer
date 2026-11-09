@@ -81,6 +81,67 @@ def context_lines(done: Sequence[SavedReview]) -> list[str]:
     return lines
 
 
+def _calls_needed(review: SavedReview) -> int:
+    """Give how many model calls a review needs without retries.
+
+    Args:
+        review (SavedReview): The review.
+
+    Returns:
+        int: 2 for a candidate review that asked for lookups, 1 otherwise.
+    """
+    record = (review.details or {}).get("candidates") or {}
+    return 2 if record.get("lookups") else 1
+
+
+def candidate_lines(done: Sequence[SavedReview], findings: Sequence[dict[str, Any]]) -> list[str]:
+    """Describe the candidate stage's static warnings and lookups, as Markdown lines.
+
+    Args:
+        done (Sequence[SavedReview]): The finished reviews.
+        findings (Sequence[dict[str, Any]]): Every finding of the run, with its claim.
+
+    Returns:
+        list[str]: A "Candidate stage" section, or nothing when no review is a candidate one.
+    """
+    records = {
+        review.instance_id: review.details["candidates"]
+        for review in done
+        if review.details and "candidates" in review.details
+    }
+    if not records:
+        return []
+    status = Counter(record.get("static_status", "") for record in records.values())
+    warnings = sum(int(record.get("warnings", 0)) for record in records.values())
+    shown = sum(int(record.get("warnings_shown", 0)) for record in records.values())
+    with_warnings = sum(int(record.get("warnings", 0)) > 0 for record in records.values())
+    allowed = sum(bool(record.get("lookups_allowed")) for record in records.values())
+    asked = [record for record in records.values() if record.get("lookups")]
+    lookups = [item for record in asked for item in record["lookups"]]
+    tools = Counter(item.split(" ", 1)[0] for item in lookups)
+    found = sum(int(record.get("lookups_found", 0)) for record in asked)
+    discarded = sum(int(record.get("discarded", 0)) for record in asked)
+    dropped = sum(int(record.get("dropped", 0)) for record in records.values())
+    variants = sorted({str(record.get("variant", "")) for record in records.values()})
+    per_pr = Counter(item["instance_id"] for item in findings if item["instance_id"] in records)
+    counts = sorted(per_pr[instance_id] for instance_id in records)
+    return [
+        "## Candidate stage",
+        "",
+        f"- Prompt variant: {', '.join(variants)}; candidates per PR: median "
+        f"{counts[len(counts) // 2]}, most {counts[-1]}",
+        f"- Static tools: ran on {status['ok']} PRs, no Python line changed on "
+        f"{status['no_python']}, failed on {status['failed']}; {warnings} warnings on changed "
+        f"lines in {with_warnings} PRs, {shown} of them shown to the model",
+        f"- Lookups: allowed on {allowed} PRs (the others had no room left), asked on "
+        f"{len(asked)}; {len(lookups)} lookups ({tools['read_file']} read_file, "
+        f"{tools['search_symbol']} search_symbol), {found} found something; {discarded} "
+        "candidates that came with lookups were dropped for the final reply",
+        f"- Malformed candidates dropped from accepted replies: {dropped}",
+        "",
+    ]
+
+
 def summary_markdown(
     settings: dict[str, Any],
     prs: Sequence[Instance],
@@ -120,8 +181,13 @@ def summary_markdown(
         f"- PRs: the {len(prs)} {settings['split']} PRs from {settings['since']} on",
         f"- Reviewed: {len(done)}; failed (no usable reply in {settings['max_tries']} tries): "
         f"{len(failed)}; not reviewed yet: {waiting}",
-        f"- Size limit: {settings['input_budget_chars']:,} characters of PR text per request; "
-        f"{len(trimmed)} PRs trimmed",
+        f"- Size limit: {settings['input_budget_chars']:,} characters of "
+        + (
+            "request text (PR, warnings, lookups, context)"
+            if settings["reviewer"] == "candidates"
+            else "PR text"
+        )
+        + f" per request; {len(trimmed)} PRs trimmed",
         "",
         "## Findings",
         "",
@@ -150,7 +216,8 @@ def summary_markdown(
         lines += [f"| {review.instance_id} | {len(review.left_out)} |" for review in trimmed]
         lines.append("")
     lines += context_lines(done)
-    retried = [review for review in saved if review.tries > 1 or review.failures]
+    lines += candidate_lines(done, findings)
+    retried = [r for r in saved if r.tries > _calls_needed(r) or r.failures]
     lines += [
         "## Model use",
         "",

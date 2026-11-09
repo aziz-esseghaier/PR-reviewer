@@ -17,7 +17,7 @@ from psycopg.conninfo import conninfo_to_dict
 from pr_reviewer import __version__
 from pr_reviewer.benchmark.source import DATASET, PinnedFile, sha256_of
 from pr_reviewer.benchmark.split import Split, save_split
-from pr_reviewer.cli import main
+from pr_reviewer.cli import build_parser, main
 from pr_reviewer.db.migrate import migrate
 from tests.benchmark.test_dataset import make_row, sha, write_dataset
 
@@ -266,6 +266,27 @@ def test_score_since_keeps_only_the_newer_prs(
     args = ["score", str(reviews), "--name", "t", "--reviewer", "none", "--since", "2022"]
     assert main([*args, "--data", str(tiny_dataset)]) == 1
     assert "The dev set has no PRs from 2022 on." in capsys.readouterr().err
+
+
+def test_score_with_issues_keeps_only_the_prs_with_known_issues(
+    tiny_dataset: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Check --with-issues is named when it leaves no PR to score."""
+    reviews = write_reviews(tmp_path, "psf__requests-5")
+    args = ["score", str(reviews), "--name", "t", "--reviewer", "none", "--with-issues"]
+    assert main([*args, "--since", "2022", "--data", str(tiny_dataset)]) == 1
+    assert "The dev set has no PRs with known issues from 2022 on." in capsys.readouterr().err
+
+
+def test_the_m7_commands_are_listed() -> None:
+    """Check the static and candidate commands parse with their options."""
+    parser = build_parser()
+    static = parser.parse_args(["static", "run", "--ids", "a", "--again"])
+    assert static.ids == ["a"] and static.again
+    review = parser.parse_args(["review", "candidates", "--with-issues", "--variant", "v1"])
+    assert review.with_issues and review.variant == "v1"
+    assert review.name == "candidates-gpt-oss-120b"
+    assert not parser.parse_args(["review", "naive"]).with_issues
 
 
 def test_score_refuses_a_bad_experiment_name(

@@ -9,7 +9,8 @@ gets:
   programs, and commands run as the non-root user "sandbox";
 - nothing from this machine: no Windows folders, no Docker socket, no settings from .env. The
   only shared data is the repo volume (sandbox/repos.py), attached read-only unless the
-  sandbox is the one that downloads the repos;
+  sandbox is the one that downloads the repos, and any extra Docker volume a caller attaches,
+  always read-only (such as the static tools, static/tools.py);
 - a network switch, off at the start. Off, the container has nothing but its own loopback
   interface, so even name lookups fail. On, it joins an internal network whose only way out is
   the proxy (sandbox/proxy.py), which lets through only the hosts allowed in
@@ -282,6 +283,8 @@ class Sandbox:
             downloads the repos, which runs no PR code.
         log_dir (Path | None): Folder for one log file per command. None keeps no logs.
         limits (Limits | None): Limits to use instead of the config's, such as in tests.
+        volumes (Mapping[str, str] | None): Extra Docker volumes to attach read-only, as
+            {volume name: folder inside the sandbox}.
     """
 
     def __init__(
@@ -295,12 +298,14 @@ class Sandbox:
         repos_writable: bool = False,
         log_dir: Path | None = None,
         limits: Limits | None = None,
+        volumes: Mapping[str, str] | None = None,
     ) -> None:
         self._client = client
         self._config = config
         self._image = image
         self._limits = limits or config.limits
         self._repos_writable = repos_writable
+        self._volumes = dict(volumes or {})
         self._start_online = network
         self.name = f"pr-reviewer-{purpose}-{uuid.uuid4().hex[:8]}"
         self.log_dir = log_dir / self.name if log_dir is not None else None
@@ -342,6 +347,9 @@ class Sandbox:
         limits = self._limits
         memory = f"{round(limits.memory_gb * 1024)}m"
         mode = "rw" if self._repos_writable else "ro"
+        volumes = {self._config.repos_volume: {"bind": REPOS_MOUNT, "mode": mode}}
+        for name, folder in self._volumes.items():
+            volumes[name] = {"bind": folder, "mode": "ro"}
         try:
             self._network = ensure_network(self._client, self._config)
             self._container = self._client.containers.create(
@@ -364,7 +372,7 @@ class Sandbox:
                 security_opt=["no-new-privileges"],
                 init=True,
                 network=self._config.network,
-                volumes={self._config.repos_volume: {"bind": REPOS_MOUNT, "mode": mode}},
+                volumes=volumes,
             )
             self._container.start()
             self._online = True

@@ -107,6 +107,7 @@ class Experiment:
         reviews (int): How many reviews were scored.
         judge (dict[str, Any]): The judge's profile, provider, model, temperature and max_tokens.
         since (int | None): Only the set's PRs from this year on were scored. None means all.
+        with_issues (bool): Only the PRs with known issues were scored.
     """
 
     name: str
@@ -118,14 +119,18 @@ class Experiment:
     reviews: int
     judge: dict[str, Any]
     since: int | None = None
+    with_issues: bool = False
 
     def config(self) -> dict[str, Any]:
         """Give the experiment as the JSON object saved in config.json.
 
         Returns:
-            dict[str, Any]: The config. "since" appears only when a subset was scored.
+            dict[str, Any]: The config. "since" and "with_issues" appear only when a subset
+            was scored.
         """
-        subset = {} if self.since is None else {"since": self.since}
+        subset: dict[str, Any] = {} if self.since is None else {"since": self.since}
+        if self.with_issues:
+            subset["with_issues"] = True
         return {
             "name": self.name,
             "date": self.date,
@@ -217,6 +222,8 @@ def summary_markdown(experiment: Experiment, analysis: dict[str, Any], prs: int)
         )
     judge = experiment.judge
     subset = "" if experiment.since is None else f" from {experiment.since} on"
+    if experiment.with_issues:
+        subset += ", only those with known issues"
     lines = [
         f"# Scores: {experiment.name}",
         "",

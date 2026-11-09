@@ -75,6 +75,13 @@ def scored(tmp_path: Path, run: ScoreRun) -> Path:
     return folder
 
 
+def test_a_subset_with_known_issues_is_named_in_the_config() -> None:
+    """Check with_issues appears in config.json only when set."""
+    assert "with_issues" not in EXPERIMENT.config()
+    subset = Experiment(**{**vars(EXPERIMENT), "since": 2022, "with_issues": True})
+    assert subset.config()["with_issues"] is True and subset.config()["since"] == 2022
+
+
 def test_results_folder_holds_config_metrics_summary_and_raw(tmp_path: Path) -> None:
     """Check every file of a results folder, from a run of reviews with no points."""
     folder = scored(tmp_path, run_with([NO_POINTS, GOOD_CLEAN], "No issues.", "No issues."))

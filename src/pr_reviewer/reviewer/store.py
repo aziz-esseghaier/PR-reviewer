@@ -130,6 +130,7 @@ def save_review(
         "cut": result.cut,
         "log": list(result.log),
     }
+    details.update(result.extra or {})
     context_chars = context_pieces = None
     if result.context is not None:
         details["context"] = result.context
@@ -191,6 +192,8 @@ class SavedReview:
         left_out (tuple[str, ...]): File diffs left out to fit.
         context (dict[str, Any] | None): What context the request held (room, characters,
             included and left-out pieces); None for a reviewer without context.
+        details (dict[str, Any] | None): Everything saved with the review, such as the
+            candidate reviewer's lookups under "candidates".
     """
 
     instance_id: str
@@ -204,6 +207,7 @@ class SavedReview:
     review: str
     left_out: tuple[str, ...]
     context: dict[str, Any] | None = None
+    details: dict[str, Any] | None = None
 
 
 def load_reviews(conn: psycopg.Connection[TupleRow], run: str) -> dict[str, SavedReview]:
@@ -249,6 +253,7 @@ def load_reviews(conn: psycopg.Connection[TupleRow], run: str) -> dict[str, Save
             review=review,
             left_out=tuple(details.get("left_out", [])),
             context=details.get("context"),
+            details=details,
         )
     return reviews
 

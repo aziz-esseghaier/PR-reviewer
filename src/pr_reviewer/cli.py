@@ -30,6 +30,10 @@ How to run (inside the conda env, from the project folder):
                                               and check it reached the known issues' code
     pr-reviewer review context | compare      review with that context, and compare the scored
                                               run with the naive one
+    pr-reviewer static run                    run ruff, mypy, bandit and semgrep on each dev PR's
+                                              changed lines, in its built environment (Docker)
+    pr-reviewer review candidates             list every plausible problem, with those warnings
+                                              and lookups in the repo (the candidate stage)
     pr-reviewer sandbox build | repos | check | status | cleanup
                                               build the sandbox images, download the dev PRs'
                                               repos, check their checkouts, show or clean up
@@ -145,6 +149,8 @@ from pr_reviewer.sandbox.commands import add_commands as add_sandbox_commands
 from pr_reviewer.sandbox.image import ImageError
 from pr_reviewer.sandbox.runner import SandboxError
 from pr_reviewer.setup_agent.commands import add_commands as add_setup_commands
+from pr_reviewer.static.commands import add_commands as add_static_commands
+from pr_reviewer.static.tools import StaticError
 
 Handler = Callable[[argparse.Namespace], int]
 
@@ -650,8 +656,11 @@ def _score(args: argparse.Namespace) -> int:
     split = load_split(split_path(), sha256=SPLIT_SHA256)
     in_set = split_prs(instances, split, args.split, unlock_test=args.unlock_test_set)
     prs = [pr for pr in in_set if args.since is None or pr.year >= args.since]
+    if args.with_issues:
+        prs = [pr for pr in prs if pr.changes]
     if not prs:
-        raise DatasetError(f"The {args.split} set has no PRs from {args.since} on.")
+        which = " with known issues" if args.with_issues else ""
+        raise DatasetError(f"The {args.split} set has no PRs{which} from {args.since} on.")
     # Reviews of the set's PRs from before `since` are left out, so a file covering the
     # whole set can be scored on the subset too.
     left_out = {pr.instance_id for pr in in_set} - {pr.instance_id for pr in prs}
@@ -678,9 +687,12 @@ def _score(args: argparse.Namespace) -> int:
             "max_tokens": judge_profile.max_tokens,
         },
         since=args.since,
+        with_issues=args.with_issues,
     )
     total = len(predictions)
     subset = "" if args.since is None else f" from {args.since} on"
+    if args.with_issues:
+        subset += " with known issues"
     print(f"Scoring {total} reviews of the {args.split} set{subset} from {predictions_path.name}")
     print(f"Judge: {JUDGE_MODEL}. Tracing: {describe_tracing()}")
 
@@ -877,6 +889,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="score only the set's PRs from this year on; reviews of its other PRs are ignored",
     )
+    score.add_argument(
+        "--with-issues",
+        action="store_true",
+        help="score only the PRs with known issues (for a run made with --with-issues)",
+    )
     score.set_defaults(handler=_score)
 
     add_review_commands(commands, data_option)
@@ -884,6 +901,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_sandbox_commands(commands, data_option)
     add_setup_commands(commands, data_option)
     add_difftest_commands(commands, data_option)
+    add_static_commands(commands, data_option)
     return parser
 
 
@@ -932,6 +950,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Sandbox problem: {exc}", file=sys.stderr)
     except ContextError as exc:
         print(f"Context problem: {exc}", file=sys.stderr)
+    except StaticError as exc:
+        print(f"Static tools problem: {exc}", file=sys.stderr)
     finally:
         flush_traces()
     return 1

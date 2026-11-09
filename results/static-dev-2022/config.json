@@ -1,0 +1,17 @@
+{
+  "ruff_select": "F,B,PLE",
+  "bandit_severity": "medium",
+  "semgrep_rules": "correctness and security",
+  "mypy_flags": [
+    "--ignore-missing-imports",
+    "--check-untyped-defs"
+  ],
+  "tool_minutes": 10.0,
+  "since": 2022,
+  "tools_image": "pr-reviewer-tools:f9bab73f9ba7",
+  "tools_volume": "pr-reviewer-tools-f9bab73f9ba7",
+  "versions": "ruff 0.17.4\nmypy 2.4.1 (compiled: yes)\nbandit 1.9.4\nsemgrep 1.184.0\nsemgrep-rules 16b9e6d45f10649f6a531ec4838ed9924372c3bc 284 rule files",
+  "static_version": 1,
+  "settings_key": "8a38fc0f23f0543f08d8ac7c5166bdf64e1e6d5800555ce28b41e49d3704451f",
+  "date": "2026-11-07"
+}
