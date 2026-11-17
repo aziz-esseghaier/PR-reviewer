@@ -169,7 +169,7 @@ def _candidates(args: argparse.Namespace) -> int:
     return _review(args, "candidates")
 
 
-class _LookupRunner:
+class LookupRunner:
     """Answers a PR's lookups in an indexer sandbox, connecting to Docker only when needed.
 
     Args:
@@ -383,7 +383,7 @@ def _review(args: argparse.Namespace, reviewer: str) -> int:
             f"with {REVIEWER_PROFILE} (run {args.name}, {reviewer} reviewer, up to {budget:,} "
             "characters of request text)"
         )
-        lookups = _LookupRunner(sandbox_config, LookupLimits())
+        lookups = LookupRunner(sandbox_config, LookupLimits())
         for number, pr in enumerate(todo, start=1):
             print(f"[{number}/{len(todo)}] {pr.instance_id}", flush=True)
             failures = status.get(pr.instance_id, ("", 0))[1]

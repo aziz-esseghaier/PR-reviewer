@@ -1,7 +1,7 @@
 """Tests for the LLM client in core/llm.py.
 
-Checks what the client sends to a provider, how it reads replies and errors, how it uses the
-response cache, how it retries and waits for per-minute limits, how it records every try in
+Checks what the client sends to a provider, how it reads replies, tool calls and errors, how it
+uses the response cache, how it retries and waits for per-minute limits, how it records every try in
 the usage log, and how it stops or waits at daily limits. Every test runs against a fake
 provider and a fake clock, so none uses API quota or keys, and none really waits.
 
@@ -18,7 +18,13 @@ import pytest
 
 from pr_reviewer.core.config import ConfigError, ModelLimits
 from pr_reviewer.core.limits import LimitError
-from pr_reviewer.core.llm import ChatMessage, LLMClient, explain_api_error, list_provider_models
+from pr_reviewer.core.llm import (
+    ChatMessage,
+    LLMClient,
+    ToolCall,
+    explain_api_error,
+    list_provider_models,
+)
 from pr_reviewer.core.usage import UsageEntry
 from tests.fakes import (
     FAKE_CONFIG,
@@ -26,6 +32,8 @@ from tests.fakes import (
     FakeProvider,
     MemoryCache,
     MemoryUsageLog,
+    ScriptedProvider,
+    completion_body,
     config_with,
     fake_client,
 )
@@ -133,6 +141,32 @@ def test_reply_format_is_sent_and_cached_separately() -> None:
     assert again.cached is True
     assert len(provider.requests) == 2
     assert "response_format" not in json.loads(provider.requests[1].content)
+
+
+def test_tools_are_sent_and_the_calls_read_and_cached() -> None:
+    """Check offered tools reach the provider with tool_choice "auto", the model's calls come
+    back in the reply, and a reply holding only calls is cached under a key with the tools."""
+    tool = {"type": "function", "function": {"name": "read_file", "parameters": {}}}
+    calls = [("read_file", {"path": "a.py", "start_line": 1, "end_line": 5})]
+    reply = httpx2.Response(200, json=completion_body(None, tool_calls=calls))
+    provider = ScriptedProvider([reply, "plain"])
+    client = fake_client(provider, cache=MemoryCache())
+    messages: list[ChatMessage] = [{"role": "user", "content": "Look it up."}]
+
+    first = client.complete(messages, tools=[tool])
+    again = client.complete(messages, tools=[tool])
+    plain = client.complete(messages)  # no tools: a different request
+
+    body = provider.body(0)
+    assert body["tools"] == [tool] and body["tool_choice"] == "auto"
+    assert "tools" not in provider.body(1) and "tool_choice" not in provider.body(1)
+    assert first.text == "" and first.finish_reason == "tool_calls"
+    assert first.tool_calls == [
+        ToolCall(name="read_file", arguments='{"path": "a.py", "start_line": 1, "end_line": 5}')
+    ]
+    assert again.cached is True and again.tool_calls == first.tool_calls
+    assert plain.text == "plain" and plain.tool_calls == []
+    assert len(provider.requests) == 2
 
 
 def test_reasoning_effort_is_sent_only_when_the_profile_sets_it() -> None:

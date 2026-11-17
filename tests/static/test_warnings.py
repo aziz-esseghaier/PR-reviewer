@@ -188,8 +188,8 @@ def test_only_warnings_on_changed_lines_are_kept() -> None:
 
 
 def test_a_warning_becomes_tool_evidence_for_a_claim_on_its_line() -> None:
-    """Check the evidence a warning gives supports a claim on the same lines."""
-    evidence = warning(line=9).evidence()
+    """Check a confirmed warning backs a claim on the same lines, and an unconfirmed one doesn't."""
+    evidence = warning(line=9).evidence(confirmed=True)
     claim = Claim(
         file="pkg/cart.py",
         start_line=8,
@@ -199,6 +199,7 @@ def test_a_warning_becomes_tool_evidence_for_a_claim_on_its_line() -> None:
         confidence=0.9,
     )
     assert evidence.tool == "mypy" and evidence.supports(claim)
+    assert not warning(line=9).evidence().supports(claim)
     assert (
         warning(line=9).text() == 'pkg/cart.py:9 mypy [attr-defined] "Cart" has no attribute "totl"'
     )

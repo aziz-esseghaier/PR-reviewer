@@ -4,9 +4,10 @@ A Finding is a Claim plus the Evidence collected for it:
 - Claim: what the reviewer model says is wrong, and where. It's the only shape the model fills
   in, so text in a PR can't talk the model into attaching proof.
 - Evidence: made only by our own code. Strongest first: a test that passes on the base commit
-  and fails on the PR with the predicted error (tier 1), a static tool flagging the claimed
-  lines (tier 2), and reasoning that a verifier failed to refute (tier 3). A finding with none
-  of these is tier 4 and gets dropped.
+  and fails on the PR with the predicted error (tier 1; for code the PR adds, the base may
+  fail only because that code is missing), a static tool flagging the same problem on the
+  claimed lines (tier 2), and reasoning that a verifier failed to refute (tier 3). A finding
+  with none of these is tier 4 and gets dropped.
 
 An EnvRecipe says how to install and test one repo over a period of time. It counts as verified
 only when the repo's own tests passed with it, never on the setup agent's word.
@@ -211,8 +212,18 @@ def _same_exception(seen: str, expected: str) -> bool:
 RunResult = Literal["passed", "failed", "error"]
 
 
+# What kind of proof a test run gave: "executed" (passes on the base commit, fails on the PR)
+# or "new_code" (the code is new: the base run fails only because it's missing).
+ProofKind = Literal["executed", "new_code"]
+
+
 class ExecutionEvidence(BaseModel):
     """Tier 1: a generated test, run on the base commit and on the PR commit.
+
+    The evidence agent's matcher (evidence/matching.py) decides whether the run is a proof and
+    records it in `proof`: the failure must match the claim and come through the lines the PR
+    changed. supports() also checks the facts recorded here, so a proof can't name the wrong
+    error or a run that didn't fail.
 
     Attributes:
         kind (Literal["execution"]): Tells the evidence types apart when read back from JSON.
@@ -222,6 +233,16 @@ class ExecutionEvidence(BaseModel):
         pr_result (RunResult): How the test ended on the PR commit.
         failure (ExceptionName | None): The error behind the PR failure, such as
             "AttributeError". None when it didn't fail.
+        failure_classes (tuple[ExceptionName, ...]): The failure's parent classes, such as
+            ("LookupError", "Exception"), so a subclass of the predicted error matches.
+        caught_error (ExceptionName | None): When the claim is about an error's content: the
+            claimed error the test caught with pytest.raises before its check on it failed
+            (the failure is then AssertionError). None otherwise.
+        proof (ProofKind | None): The matcher's verdict: "executed", "new_code", or None when
+            the run proves nothing.
+        reason (str): Why the run is or isn't a proof, in a few words.
+        deliberate (bool): Whether a verifier read the PR's own tests, docs or changelog as
+            showing the change was meant; such a proof doesn't count.
         log_path (str | None): File holding the full test output.
     """
 
@@ -234,13 +255,20 @@ class ExecutionEvidence(BaseModel):
     base_result: RunResult
     pr_result: RunResult
     failure: ExceptionName | None = None
+    failure_classes: tuple[ExceptionName, ...] = ()
+    caught_error: ExceptionName | None = None
+    proof: ProofKind | None = None
+    reason: str = ""
+    deliberate: bool = False
     log_path: str | None = None
 
     def supports(self, claim: Claim) -> bool:
         """Tell whether this test run proves the claim.
 
-        It does only when the test passes on the base commit, fails on the PR commit, and fails
-        with the error the claim predicted. An ImportError doesn't prove an AttributeError claim.
+        It does only when the matcher found a proof, the change wasn't deliberate, the test
+        failed on the PR commit with the error the claim predicted (or a subclass of it, or a
+        check on that error after catching it), and the base run fits the proof: passed, or for
+        new code didn't pass. An ImportError doesn't prove an AttributeError claim.
 
         Args:
             claim (Claim): The claim the test was written for.
@@ -248,17 +276,26 @@ class ExecutionEvidence(BaseModel):
         Returns:
             bool: True when the run proves the claim.
         """
-        return (
-            self.base_result == "passed"
-            and self.pr_result == "failed"
-            and self.failure is not None
-            and claim.expected_failure is not None
-            and _same_exception(self.failure, claim.expected_failure)
-        )
+        if (
+            self.proof is None
+            or self.deliberate
+            or self.pr_result != "failed"
+            or self.failure is None
+            or claim.expected_failure is None
+        ):
+            return False
+        names = (self.failure, *self.failure_classes)
+        if self.caught_error is not None and _same_exception(self.failure, "AssertionError"):
+            names = (*names, self.caught_error)
+        if not any(_same_exception(name, claim.expected_failure) for name in names):
+            return False
+        if self.proof == "executed":
+            return self.base_result == "passed"
+        return self.base_result != "passed"
 
 
 class ToolEvidence(BaseModel):
-    """Tier 2: a static analysis tool flagged a line the claim points at.
+    """Tier 2: a static analysis tool flagged the same problem on a line the claim points at.
 
     Attributes:
         kind (Literal["tool"]): Tells the evidence types apart when read back from JSON.
@@ -267,6 +304,9 @@ class ToolEvidence(BaseModel):
         message (str): The tool's message.
         file (RepoPath): File the warning is in.
         line (int): Line the warning is on, from 1.
+        confirmed (bool): Whether the verifier judged that the warning describes the problem
+            the claim describes. A warning on the right line about something else (a style
+            rule, say) is no evidence.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -278,17 +318,23 @@ class ToolEvidence(BaseModel):
     message: str
     file: RepoPath
     line: int = Field(ge=1)
+    confirmed: bool = False
 
     def supports(self, claim: Claim) -> bool:
-        """Tell whether the warning lands on the claimed lines.
+        """Tell whether the warning backs the claim.
 
         Args:
             claim (Claim): The claim to check against.
 
         Returns:
-            bool: True when the warning is in the claim's file and line range.
+            bool: True when the warning is confirmed as the same problem and lands in the
+            claim's file and line range.
         """
-        return self.file == claim.file and claim.start_line <= self.line <= claim.end_line
+        return (
+            self.confirmed
+            and self.file == claim.file
+            and claim.start_line <= self.line <= claim.end_line
+        )
 
 
 class VerifierEvidence(BaseModel):

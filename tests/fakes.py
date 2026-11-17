@@ -93,28 +93,43 @@ class FakeClock:
         self.time += seconds
 
 
-def completion_body(content: str | None, finish_reason: str = "stop") -> dict[str, Any]:
+def completion_body(
+    content: str | None,
+    finish_reason: str = "stop",
+    tool_calls: Sequence[tuple[str, dict[str, Any] | str]] = (),
+) -> dict[str, Any]:
     """Build a chat completion reply the way OpenAI-compatible providers send it.
 
     Args:
         content (str | None): The reply text. None mimics a model that wrote nothing.
         finish_reason (str): Why the model stopped.
+        tool_calls (Sequence[tuple[str, dict[str, Any] | str]]): Tool calls the model asks
+            for: a name and its arguments (a dict, or the raw text). Any call makes the
+            finish reason "tool_calls".
 
     Returns:
         dict[str, Any]: The JSON body.
     """
+    message: dict[str, Any] = {"role": "assistant", "content": content}
+    if tool_calls:
+        message["tool_calls"] = [
+            {
+                "id": f"call_{n}",
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "arguments": arguments if isinstance(arguments, str) else json.dumps(arguments),
+                },
+            }
+            for n, (name, arguments) in enumerate(tool_calls)
+        ]
+        finish_reason = "tool_calls"
     return {
         "id": "chatcmpl-test",
         "object": "chat.completion",
         "created": 0,
         "model": "fake-model-v1",
-        "choices": [
-            {
-                "index": 0,
-                "message": {"role": "assistant", "content": content},
-                "finish_reason": finish_reason,
-            }
-        ],
+        "choices": [{"index": 0, "message": message, "finish_reason": finish_reason}],
         "usage": {"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15},
     }
 

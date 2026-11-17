@@ -302,6 +302,75 @@ Recall rises from 10 to 12 hits, mostly on functional issues (8 → 11); precisi
 
 A full run uses about 355,000 tokens, close to two days of Groq's free quota. `results/candidates-gpt-oss-120b/` has the summaries and `comparison.md`; the tuning runs are in `results/candidates-gpt-oss-120b-v1/` and `-v2/`.
 
+## Evidence agent
+
+The evidence stage checks each candidate and records the strongest evidence it can get. The tiers, strongest first:
+1. **Executed proof.** A generated test passes at the base and fails at the PR with the claimed error.
+2. **Static-tool evidence.** A static warning on the claimed lines that the verifier confirms describes the same problem.
+3. **Verified reasoning.** A verifier told to refute the claim fails to, and traces it: an input, the lines it runs and the failure.
+4. **No evidence.** The gate, the next stage, drops these.
+
+It runs as a LangGraph graph per PR:
+1. **Survey.** One sandbox from the PR's prepared image reads what every candidate needs, with no model call: the function holding the claimed lines, the diff's nearest hunks, the existing test closest to the code (the one the retrieval step found using the function, or the nearest by folder), its imports and one of its tests, and the fixtures its folder's `conftest.py` files define. Files are parsed with `ast` on this side, so no repo code runs.
+2. **One subgraph per candidate.** LangGraph's `Send` starts the candidate subgraph once per candidate, 2 at a time. Model calls go through one lock, one at a time, while another candidate's tests run in Docker.
+
+Each candidate's subgraph:
+- **Route.** A functional claim that names an error, in a Python file, goes to the test writer. Anything else, such as a documentation or design claim, goes straight to the verifier.
+- **Write.** The model writes one pytest test of what the code should do, so it passes at the base and fails at the PR if the claim is true. Our code refuses a test that doesn't hold exactly one test function, or that uses calls that could fake where an error comes from (`exec`, `eval`, `compile`, swapping a function's code).
+- **Run.** The differential runner runs it 3 times at each side, network off, watching the PR's changed source lines.
+- **Match.** Our code reads the outcome:
+  - **Proof:** the claimed error (or a subclass) at the PR, through a changed line, not raised by the test's own code.
+  - **Wrong value:** for an `AssertionError` claim, the test's assert fails at the PR after running a changed line.
+  - **Error content:** when the claim is about what an error says, a failed check on that error caught with `pytest.raises` also counts.
+  - **New-code proof:** for code the PR adds, the base may fail only because a name the PR defines is missing.
+  - **Broken test:** skipped, failing to load or set up, or failing at the base for another reason. It goes back to the model with the error, for a fix.
+- **Intent check.** A proof is dropped when the PR's own tests, docs or changelog show the change was meant. Our code looks for signs in the diff; only when it finds some does a verifier call decide.
+- **Verify.** The model tries to refute the claim and judges the static warnings on its lines.
+
+**Budget per candidate:**
+- **Test writer:** at most 3 replies (a test, then fixes or one round of lookup tool calls) and 20 minutes of test runs.
+- **Verifier:** one decision, plus one optional lookup round.
+
+**Lookups are tool calls.** The test writer and the verifier look things up by calling two tools, `read_file` and `search_symbol`, instead of listing lookups in their JSON reply as the candidate reviewer does. gpt-oss is trained for tool calls: asked to write lookups in JSON, it often "called" one in its thinking and ended its turn with no JSON, so Groq refused the reply, and at temperature 0 it did so again on every retry. Groq takes tools or a strict JSON format, not both, so a request that offers the tools has its JSON reply checked by our code alone; the request after the lookups offers no tools and uses the strict format.
+
+Replies that aren't valid JSON are asked for again, as before, and so are replies Groq refuses (no JSON, broken JSON, or a call to a tool that doesn't exist). A refused call to a tool that doesn't exist is still read: a lookup under another name (such as `repo_browser.read_file`) counts as a lookup, and an answer sent as a tool's arguments counts as the reply if it passes the checks. After any other refused reply, or an empty one, the next tries send the same request without the tools. The evidence run uses the reviewer's model with room for 4,000 reply tokens (`evidence-gpt-oss-120b`), since at 3,000 about half the test writer's replies ran out while thinking.
+
+Each candidate's tier, cost and evidence go to the `candidate_evidence` table (migration 0011), and its generated tests under `data/evidence/`. The run sleeps through Groq's quota waits (up to 30 minutes each) instead of stopping, so a retry in progress isn't lost. Model replies and test runs are cached, so a run that does stop resumes where it stopped.
+
+```
+pr-reviewer evidence run --with-issues    # the candidates of the 26 dev PRs with known issues
+pr-reviewer evidence run --clean          # then those of the 42 clean ones
+pr-reviewer evidence report               # write results/evidence-tools-gpt-oss-120b/ from what's saved
+```
+
+`evidence report` writes the tiers by kind, the proof rate, how the test writer and the verifier ended, and each tier set against the judge's verdict on the same finding in the candidate run, with no new judge call. Each proving test is copied to `proofs/`.
+
+**Results.** These are for the 204 candidates of the candidate run, on 50 of the 68 dev PRs from 2022 onward. Each candidate is counted against the judge's verdict on the same finding:
+
+| Tier | Candidates | Hit (known issue) | False alarm, PR with issues | False alarm, clean PR |
+|---|---|---|---|---|
+| 1 (executed) | 5 | 2 | 3 | 0 |
+| 2 (static tool) | 4 | 0 | 0 | 4 |
+| 3 (verifier) | 20 | 0 | 7 | 13 |
+| 4 (dropped) | 175 | 10 | 59 | 106 |
+
+- **The evidence removes most false alarms, and most hits too.** Tiers 1–3 keep 29 of the 204 candidates. That is 2 of the 12 hits and 27 of the 192 false alarms; 17 of those 27 are on clean PRs, against 123 before.
+- **The verifier is the weak link:**
+  - It refuted all 10 hits it judged.
+  - None of its 20 upheld claims is a hit.
+  - It never sees the test runs, or whether a claimed line is new, moved or unchanged. Some upheld claims were already disproved by a test run. Others describe a change the PR's own tests show was meant, or a problem older than the PR.
+- **Executed proof is rare:**
+  - 5 of the 148 functional candidates got a proving test (3.4%), and 5 of the 115 that name an error (4.3%). No clean PR got one.
+  - Of the 83 candidates sent to the test writer, the model wrote 157 tests. Our checks refused 51 before running; 43 of those caught the claimed error with `pytest.raises`, so they would pass where the bug is. Another 61 broke when run, 46 of them by failing at the base commit.
+  - A first look at the 5 proofs found weak spots in 4. In 3, the base passes only through a guard the test adds around code the PR introduces. In 2, the PR's own tests or docs show the change was meant, and the intent check found no signs, so it never ran. (One proof has both problems.)
+- **Groq refused about a quarter of the calls** (137 of 579). 104 of those held a usable answer sent as a call to a made-up tool, and were read back.
+- **Cost:**
+  - 574 model replies, using about 865,000 tokens in and 295,000 out. Read-back answers are logged at 0 tokens, but Groq still counts them.
+  - 84 minutes of test runs in Docker.
+  - About 6.5 days on the free quota.
+
+`results/evidence-tools-gpt-oss-120b/` has the summary, the config and the 5 proving tests.
+
 ## Sandbox (Docker)
 
 PR code is untrusted, so it only ever runs inside Docker containers called sandboxes. Every sandbox:
@@ -376,7 +445,7 @@ The strongest evidence for a finding is a test that passes before the PR and fai
 
 1. Each set-up PR is installed once at its base and once at its PR state, and both are saved as Docker images (`pr-reviewer-pr:<id>-base` and `-pr`), so later runs start in seconds.
 2. The test files are written into the working copy at both sides, so both run the same test code and only the code under test differs.
-3. Each side's tests run 3 times, with the network off and at most 5 minutes a run. A small pytest plugin, loaded from outside the repo, records each test's result: its exception type, message and failing line. Django's runner output is read instead.
+3. Each side's tests run 3 times, with the network off and at most 5 minutes a run. A small pytest plugin, loaded from outside the repo, records each test's result: its exception type and parent classes, message, failing line and traceback. Given lines to watch (such as the PR's changed lines), it also records which of them each test ran, with Python's line tracer. Django's runner output is read instead.
 4. Each test gets one outcome:
    - **pass→fail:** the PR broke what the test checks. Only this outcome can prove a bug.
    - **pass→pass, fail→pass, fail→fail:** the other three.

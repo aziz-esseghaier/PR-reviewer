@@ -24,6 +24,7 @@ from pr_reviewer.core.schemas import (
     Evidence,
     ExecutionEvidence,
     Finding,
+    ProofKind,
     RunResult,
     SetupCheck,
     Tier,
@@ -65,7 +66,12 @@ def make_claim(**changes: Any) -> Claim:
 
 
 def executed(
-    base: RunResult = "passed", pr: RunResult = "failed", failure: str | None = "AttributeError"
+    base: RunResult = "passed",
+    pr: RunResult = "failed",
+    failure: str | None = "AttributeError",
+    proof: ProofKind | None = "executed",
+    classes: tuple[str, ...] = (),
+    deliberate: bool = False,
 ) -> ExecutionEvidence:
     """Build a test-run result for the default claim.
 
@@ -73,6 +79,9 @@ def executed(
         base (RunResult): How the test ended on the base commit.
         pr (RunResult): How the test ended on the PR commit.
         failure (str | None): The error behind the PR failure.
+        proof (ProofKind | None): The matcher's verdict.
+        classes (tuple[str, ...]): The failure's parent classes.
+        deliberate (bool): Whether the change was judged deliberate.
 
     Returns:
         ExecutionEvidence: The test-run evidence.
@@ -83,21 +92,30 @@ def executed(
         base_result=base,
         pr_result=pr,
         failure=failure,
+        failure_classes=classes,
+        proof=proof,
+        deliberate=deliberate,
     )
 
 
-def flagged(file: str = "src/pkg/io.py", line: int = 11) -> ToolEvidence:
+def flagged(file: str = "src/pkg/io.py", line: int = 11, confirmed: bool = True) -> ToolEvidence:
     """Build a mypy warning at a given place.
 
     Args:
         file (str): File the warning is in.
         line (int): Line the warning is on.
+        confirmed (bool): Whether the verifier judged it the same problem as the claim.
 
     Returns:
         ToolEvidence: The tool evidence.
     """
     return ToolEvidence(
-        tool="mypy", rule="union-attr", message="Item None has no attribute", file=file, line=line
+        tool="mypy",
+        rule="union-attr",
+        message="Item None has no attribute",
+        file=file,
+        line=line,
+        confirmed=confirmed,
     )
 
 
@@ -221,7 +239,13 @@ def test_category_names_cover_every_category() -> None:
         ((executed(failure="ImportError"),), Tier.NONE),
         ((executed(base="failed"),), Tier.NONE),
         ((executed(pr="error", failure=None),), Tier.NONE),
+        ((executed(proof=None),), Tier.NONE),
+        ((executed(failure="CartError", classes=("AttributeError", "Exception")),), Tier.EXECUTED),
+        ((executed(base="error", proof="new_code"),), Tier.EXECUTED),
+        ((executed(base="passed", proof="new_code"),), Tier.NONE),
+        ((executed(deliberate=True),), Tier.NONE),
         ((flagged(line=11),), Tier.STATIC_TOOL),
+        ((flagged(line=11, confirmed=False),), Tier.NONE),
         ((flagged(line=40),), Tier.NONE),
         ((flagged(file="src/pkg/other.py"),), Tier.NONE),
         ((verified("upheld"),), Tier.VERIFIED),
@@ -234,7 +258,13 @@ def test_category_names_cover_every_category() -> None:
         "fails with a different error",
         "already failing on base",
         "can't run on PR",
+        "the matcher found no proof",
+        "fails with a subclass of the predicted error",
+        "new code: the base fails because the code is missing",
+        "a new-code proof needs the base run to fail",
+        "the change was deliberate",
         "tool flags a claimed line",
+        "tool's warning not confirmed as the same problem",
         "tool flags another line",
         "tool flags another file",
         "verifier upholds",
@@ -252,6 +282,17 @@ def test_error_names_match_without_module_prefix() -> None:
     claim = make_claim(expected_failure="JSONDecodeError")
     evidence = (executed(failure="json.decoder.JSONDecodeError"),)
     assert Finding(id="c1", claim=claim, evidence=evidence).tier is Tier.EXECUTED
+
+
+def test_a_check_on_the_caught_claimed_error_proves_it() -> None:
+    """Check an AssertionError counts when the claimed error was caught first, and only then."""
+    claim = make_claim(expected_failure="ValueError")
+    caught = executed(failure="AssertionError").model_copy(update={"caught_error": "ValueError"})
+    assert Finding(id="c1", claim=claim, evidence=(caught,)).tier is Tier.EXECUTED
+    plain = executed(failure="AssertionError")
+    assert Finding(id="c1", claim=claim, evidence=(plain,)).tier is Tier.NONE
+    other = executed(failure="TypeError").model_copy(update={"caught_error": "ValueError"})
+    assert Finding(id="c1", claim=claim, evidence=(other,)).tier is Tier.NONE
 
 
 def test_claim_without_expected_error_cannot_be_proven_by_a_test() -> None:

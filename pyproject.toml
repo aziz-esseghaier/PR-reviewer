@@ -51,8 +51,9 @@ where = ["src"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-# SWR-Bench's own scripts, kept byte for byte as published.
-extend-exclude = ["third_party"]
+# SWR-Bench's own scripts, kept byte for byte as published; results/ holds run outputs, such
+# as the model-written proof tests, kept exactly as they ran.
+extend-exclude = ["third_party", "results"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]

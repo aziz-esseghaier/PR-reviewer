@@ -1,0 +1,41 @@
+{
+  "name": "evidence-tools-gpt-oss-120b",
+  "model": "openai/gpt-oss-120b",
+  "split": "dev",
+  "budget": {
+    "max_tries": 3,
+    "max_lookups": 3,
+    "run_seconds": 120,
+    "lookup_rounds": 1,
+    "runs_per_side": 3,
+    "docker_minutes": 20.0,
+    "writer_replies": 3,
+    "verifier_lookup_rounds": 1
+  },
+  "profile": "evidence-gpt-oss-120b",
+  "provider": "groq",
+  "max_tokens": 4000,
+  "source_run": "candidates-gpt-oss-120b",
+  "static_key": "8a38fc0f23f0543f08d8ac7c5166bdf64e1e6d5800555ce28b41e49d3704451f",
+  "context_key": "b7301b7a8a6f3a96ead437c4257d6030b487d6116626374d8a5b2a17a1a656ef",
+  "temperature": 0.0,
+  "probe_sha256": "f4a0d1b31fb973ccdb88865955229a4225622136127f496ec108ab62011d6625",
+  "split_sha256": "902988f742372825324e3d042d64a8eeca4cc142fb9546e57dcb6084daffd3c2",
+  "lookup_limits": {
+    "max_defs": 8,
+    "max_uses": 15,
+    "max_chars": 2000,
+    "read_lines": 60
+  },
+  "request_chars": {
+    "intent": 10045,
+    "writer": 7830,
+    "verifier": 8402
+  },
+  "dataset_sha256": "7048e7a92ea9f7a1e6812646694a040582448cc1dd9d515264a4b55071aff95d",
+  "prompts_sha256": "4f37967548d973ab57ec4773645ca5a44f3a03559555e963794ed23cdc51e071",
+  "matching_version": 3,
+  "reasoning_effort": "medium",
+  "tokens_per_minute": 8000,
+  "date": "2026-11-17"
+}

@@ -12,6 +12,8 @@ Then:
   base), pass_pass, fail_fail, flaky (a test that fails on every second run), a test file
   that doesn't import at the base (an ImportError, from collection), and one skipped while
   loading (not_run, skipped);
+- watched lines (the PR's changed lines) show which ones each test ran, and a failure keeps
+  its traceback and its exception's classes;
 - a test ID pytest can't find stops its whole run, which shows as a problem;
 - a test that hangs is not_run, with the timeout as the reason;
 - the validation cases are built from git: the PR's own new tests (mul, and the base class's
@@ -291,6 +293,31 @@ def test_one_run_gives_every_outcome_with_its_failures(
         "skipped",
     )
     assert result.problems == {}
+
+
+def test_watched_lines_show_which_changed_lines_a_test_ran(
+    toy: tuple[TryContext, Instance, dict[PreparedSide, str], str],
+) -> None:
+    """Check the plugin notes which watched lines (here the PR's add() and mul()) each test
+    ran at the PR, and gives a failure's traceback with paths relative to the repo."""
+    ctx, pr, images, _ = toy
+    result = run_diff(
+        ctx,
+        pr,
+        RECIPE,
+        SideSpec("base", images["base"]),
+        SideSpec("pr", images["pr"]),
+        (FileSpec("tests/test_probe_cases.py", CASES),),
+        ("tests/test_probe_cases.py::test_add", "tests/test_probe_cases.py::test_name"),
+        runs=1,
+        watch={"difftoy/__init__.py": [2, 9, 10]},
+    )
+    tests = {test.test.rsplit("::", 1)[-1]: test for test in result.tests}
+    assert tests["test_add"].new.hits == ("difftoy/__init__.py:2",)
+    assert tests["test_name"].new.hits == (), "name() is on none of the watched lines"
+    failure = tests["test_add"].new.failure
+    assert failure is not None and failure.frames == ("tests/test_probe_cases.py:7",)
+    assert failure.classes[:2] == ("AssertionError", "Exception")
 
 
 def test_a_test_id_pytest_cant_find_stops_the_run(

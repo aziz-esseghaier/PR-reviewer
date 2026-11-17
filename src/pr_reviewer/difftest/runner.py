@@ -11,6 +11,8 @@ run_diff() takes a PR, some test files (path and text) and the tests to run in t
    flaky or not_run, with each run's status and the failures' exception types and lines.
 A side can also be one of the PR's later commits (a fix): the sandbox then checks it out and
 reinstalls the recipe's steps before the tests, network on only for the install.
+Given lines to watch (such as the lines a PR changed), the pytest plugin also notes which of
+them each test ran.
 
 Every run gets a request key: a fingerprint of everything that decides its result (the
 images, the test code, the targets, the settings). store.py keeps results by it, so the same
@@ -24,6 +26,7 @@ import json
 import posixpath
 import time
 from collections import Counter
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from importlib import resources
 
@@ -57,6 +60,12 @@ RUNS_PER_SIDE = 3
 PROBE_DIR = "/tmp/pr_reviewer_probe"
 PROBE_MODULE = "pr_reviewer_probe"
 REPORT_FILE = f"{PROBE_DIR}/report.jsonl"
+
+# The file listing the lines the plugin watches, when some are given.
+WATCH_FILE = f"{PROBE_DIR}/watch.json"
+
+# Lines to watch: line numbers by file path relative to the repo root.
+Watch = Mapping[str, Sequence[int]]
 
 # Raised when what the runner does changes, so results stored before aren't reused.
 # 2: pytest stopping early is a run problem; Django's output is unbuffered and read more
@@ -200,6 +209,7 @@ def request_key(
     targets: tuple[str, ...],
     runs: int,
     timeout: float,
+    watch: Watch | None = None,
 ) -> str:
     """Fingerprint everything that decides a differential run's result.
 
@@ -212,6 +222,7 @@ def request_key(
         targets (tuple[str, ...]): What runs.
         runs (int): Runs per side.
         timeout (float): Seconds per run.
+        watch (Watch | None): The lines the plugin watches; None for none.
 
     Returns:
         str: 64 hex characters.
@@ -233,6 +244,9 @@ def request_key(
         "runs": runs,
         "timeout": timeout,
     }
+    if watch:
+        # Only added when used, so runs without watched lines keep their keys.
+        what["watch"] = {path: sorted(set(lines)) for path, lines in sorted(watch.items())}
     return hashlib.sha256(json.dumps(what, sort_keys=True).encode()).hexdigest()
 
 
@@ -244,6 +258,7 @@ def _run_once(
     targets: tuple[str, ...],
     runner: Runner,
     timeout: float,
+    watching: bool = False,
 ) -> RunReport:
     """Run the targets once, network off, and read each test's result.
 
@@ -255,6 +270,7 @@ def _run_once(
         targets (tuple[str, ...]): pytest node IDs or files, or Django labels.
         runner (Runner): "pytest" or "django".
         timeout (float): Seconds the run may take.
+        watching (bool): Whether WATCH_FILE lists lines for the plugin to watch.
 
     Returns:
         RunReport: Each test's result, or why the run couldn't run.
@@ -269,6 +285,8 @@ def _run_once(
         before = env.get("PYTHONPATH")
         env["PYTHONPATH"] = f"{PROBE_DIR}:{before}" if before else PROBE_DIR
         env["PR_REVIEWER_REPORT"] = REPORT_FILE
+        if watching:
+            env["PR_REVIEWER_WATCH"] = WATCH_FILE
         # Without --continue-on-collection-errors, one test file that fails to import (such
         # as a new test at the base) stops pytest before any other test runs.
         script = (
@@ -348,6 +366,7 @@ def run_side(
     *,
     runs: int = RUNS_PER_SIDE,
     timeout: float | None = None,
+    watch: Watch | None = None,
 ) -> list[RunReport]:
     """Run the tests several times at one side, in one fresh sandbox.
 
@@ -360,6 +379,7 @@ def run_side(
         targets (tuple[str, ...]): What to run.
         runs (int): How many runs.
         timeout (float | None): Seconds per run. None means the config's difftest limit.
+        watch (Watch | None): Lines for the pytest plugin to watch; None for none.
 
     Returns:
         list[RunReport]: One report per run. When switching to the side's commit fails, every
@@ -400,10 +420,18 @@ def run_side(
         )
         if not made.ok:
             raise SandboxError(f"Can't make the test folders: {made.output.strip()[-300:]}")
-        box.write_files(PROBE_DIR, {f"{PROBE_MODULE}.py": probe_source()})
+        probe_files = {f"{PROBE_MODULE}.py": probe_source()}
+        if watch:
+            lines = {file: sorted(set(numbers)) for file, numbers in watch.items()}
+            probe_files[posixpath.basename(WATCH_FILE)] = json.dumps({"root": path, "lines": lines})
+        box.write_files(PROBE_DIR, probe_files)
         if files:
             box.write_files(path, {f.path: f.content for f in files})
-        return [_run_once(box, pr, recipe, path, targets, runner, seconds) for _ in range(runs)]
+        watching = bool(watch)
+        return [
+            _run_once(box, pr, recipe, path, targets, runner, seconds, watching)
+            for _ in range(runs)
+        ]
 
 
 def run_diff(
@@ -418,6 +446,7 @@ def run_diff(
     runs: int = RUNS_PER_SIDE,
     timeout: float | None = None,
     key: str = "",
+    watch: Watch | None = None,
 ) -> DiffResult:
     """Run tests at two sides of a PR and give each test's outcome.
 
@@ -433,6 +462,8 @@ def run_diff(
         runs (int): Runs per side.
         timeout (float | None): Seconds per run. None means the config's difftest limit.
         key (str): The request key to record with the result.
+        watch (Watch | None): Lines for the pytest plugin to watch at both sides (paths and
+            line numbers of the new side); None for none.
 
     Returns:
         DiffResult: Each test's outcome.
@@ -448,7 +479,9 @@ def run_diff(
     started = time.monotonic()
     runner = runner_kind(recipe)
     reports = {
-        side.name: run_side(ctx, pr, recipe, side, files, targets, runs=runs, timeout=timeout)
+        side.name: run_side(
+            ctx, pr, recipe, side, files, targets, runs=runs, timeout=timeout, watch=watch
+        )
         for side in (old, new)
     }
     problems = {

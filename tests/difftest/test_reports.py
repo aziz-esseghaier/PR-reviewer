@@ -68,19 +68,22 @@ def test_y():
 """
 
 
-def run_probe(folder: Path, *targets: str) -> tuple[int, reports.Readout]:
+def run_probe(
+    folder: Path, *targets: str, extra: dict[str, str] | None = None
+) -> tuple[int, reports.Readout]:
     """Run pytest with the plugin on test files in a folder, and read what it wrote.
 
     Args:
         folder (Path): The folder, which holds the test files.
         *targets (str): What pytest runs, such as "test_a.py" or "test_a.py::test_b".
+        extra (dict[str, str] | None): More environment variables, such as the watch file.
 
     Returns:
         tuple[int, reports.Readout]: pytest's exit code, and the results read.
     """
     report = folder / "report.jsonl"
     report.unlink(missing_ok=True)
-    env = {**os.environ, "PR_REVIEWER_REPORT": str(report)}
+    env = {**os.environ, "PR_REVIEWER_REPORT": str(report), **(extra or {})}
     done = subprocess.run(
         [
             sys.executable,
@@ -146,6 +149,56 @@ def test_the_plugin_records_each_tests_result_and_exception(tmp_path: Path) -> N
     assert collect["test_broken_import.py"].phase == "collect"
     assert "test_optional.py" not in collect
     assert "no_such_module_xyz" in read.collect_skips["test_optional.py"]
+
+
+CODE = """\
+class CartError(ValueError):
+    pass
+
+
+def total(items):
+    if not items:
+        raise CartError("empty cart")
+    return sum(items)
+
+
+def unused():
+    return 1
+"""
+
+CODE_TESTS = """\
+from cart import total
+
+
+def test_empty():
+    total([])
+
+
+def test_full():
+    assert total([1, 2]) == 3
+"""
+
+
+def test_the_plugin_records_classes_traceback_and_watched_lines(tmp_path: Path) -> None:
+    """Check a failure's classes and traceback frames, and the watched lines each test ran."""
+    (tmp_path / "cart.py").write_text(CODE, encoding="utf-8")
+    (tmp_path / "test_cart.py").write_text(CODE_TESTS, encoding="utf-8")
+    watch = tmp_path / "watch.json"
+    watch.write_text(
+        json.dumps({"root": str(tmp_path), "lines": {"cart.py": [6, 7, 8, 12]}}), encoding="utf-8"
+    )
+    _, read = run_probe(tmp_path, "test_cart.py", extra={"PR_REVIEWER_WATCH": str(watch)})
+    empty = read.results["test_cart.py::test_empty"]
+    full = read.results["test_cart.py::test_full"]
+    assert empty.failure is not None and empty.failure.exc_type == "CartError"
+    assert empty.failure.classes[:2] == ("CartError", "ValueError")
+    # On this machine the frames' paths are Windows paths, which stay absolute.
+    names = [frame.replace("\\", "/").rsplit("/", 1)[-1] for frame in empty.failure.frames]
+    assert names == ["test_cart.py:5", "cart.py:7"]
+    assert empty.hits == ("cart.py:6", "cart.py:7")
+    assert full.hits == ("cart.py:6", "cart.py:8"), "line 12 never runs"
+    _, unwatched = run_probe(tmp_path, "test_cart.py")
+    assert unwatched.results["test_cart.py::test_full"].hits == ()
 
 
 def test_asking_for_a_test_in_a_file_that_doesnt_load_stops_pytest(tmp_path: Path) -> None:

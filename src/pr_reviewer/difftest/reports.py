@@ -6,9 +6,11 @@ A run's result per test is one of:
 - error: the test couldn't get going, because its setup (a fixture) failed or its file
   didn't import;
 - skipped: skipped, or an expected failure (xfail), so it says nothing either way.
-A failure keeps its exception type (such as "AttributeError"), its message and the line it
-came from. The evidence gate later checks that a failure matches the reviewer's claim, so an
-ImportError can't pass for proof of an AttributeError.
+A failure keeps its exception type (such as "AttributeError"), its message, the line it came
+from and, from our pytest plugin, the exception's parent classes and every line of its
+traceback. A result can also list which watched lines (the PR's changed lines) the test ran.
+The evidence agent later checks that a failure matches the reviewer's claim, so an ImportError
+can't pass for proof of an AttributeError.
 
 Two readers:
 - read_pytest_report() reads the lines our pytest plugin wrote (pytest_probe.py). Test IDs are
@@ -49,6 +51,10 @@ class Failure(BaseModel):
         where (str): The line it was raised at, such as "pkg/a.py:12", relative to the repo
             root when inside it. "" when unknown.
         phase (str): When it happened: "setup", "call", "teardown" or "collect".
+        classes (tuple[str, ...]): The names of the exception's class and its parents, such as
+            ("KeyError", "LookupError", "Exception", "BaseException"); empty when unknown.
+        frames (tuple[str, ...]): The place of each frame of its traceback, outermost first,
+            relative to the repo root when inside it; empty when unknown.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -57,6 +63,8 @@ class Failure(BaseModel):
     message: str
     where: str
     phase: str
+    classes: tuple[str, ...] = ()
+    frames: tuple[str, ...] = ()
 
 
 class Result(BaseModel):
@@ -67,6 +75,8 @@ class Result(BaseModel):
             or a Django label such as "app.tests.ATests.test_b".
         status (Status): "passed", "failed", "error" or "skipped".
         failure (Failure | None): How it failed, for "failed" and "error".
+        hits (tuple[str, ...]): The watched lines it ran while called, such as "pkg/a.py:12";
+            empty when no lines were watched or none ran.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -74,6 +84,7 @@ class Result(BaseModel):
     test: str
     status: Status
     failure: Failure | None = None
+    hits: tuple[str, ...] = ()
 
 
 class Readout(BaseModel):
@@ -200,6 +211,7 @@ def read_pytest_report(text: str, repo: str) -> Readout:
     results: dict[str, Result] = {}
     collect: dict[str, Failure] = {}
     skips: dict[str, str] = {}
+    hits: dict[str, tuple[str, ...]] = {}
     for line in text.splitlines():
         try:
             entry = json.loads(line)
@@ -218,7 +230,11 @@ def read_pytest_report(text: str, repo: str) -> Readout:
             message=message,
             where=_where(str(entry.get("where", "")), repo),
             phase=str(entry.get("when", "collect")),
+            classes=_strings(entry.get("classes")),
+            frames=tuple(_where(frame, repo) for frame in _strings(entry.get("frames"))),
         )
+        if kind == "test" and entry.get("when") == "call" and "hits" in entry:
+            hits[nodeid] = _strings(entry.get("hits"))
         if kind == "collect" and entry.get("outcome") == "skipped":
             skips[nodeid] = message
             continue
@@ -245,7 +261,24 @@ def read_pytest_report(text: str, repo: str) -> Readout:
             continue
         keep = failure if status in ("failed", "error") else None
         results[nodeid] = Result(test=nodeid, status=status, failure=keep)
+    for nodeid, ran in hits.items():
+        if nodeid in results:
+            results[nodeid] = results[nodeid].model_copy(update={"hits": ran})
     return Readout(results=results, collect_errors=collect, collect_skips=skips)
+
+
+def _strings(value: object) -> tuple[str, ...]:
+    """Read a list of strings the plugin wrote, ignoring anything else.
+
+    Args:
+        value (object): The value from the JSON line.
+
+    Returns:
+        tuple[str, ...]: Its strings, in order; empty when it isn't a list.
+    """
+    if not isinstance(value, list):
+        return ()
+    return tuple(str(item) for item in value if isinstance(item, str))
 
 
 # A test's line at verbosity 2: "test_b (app.tests.ATests.test_b) ... ok". Python before 3.11

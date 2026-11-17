@@ -70,6 +70,8 @@ class SideResult(BaseModel):
             "skipped", "missing" (not collected), or the run's problem, such as "timeout".
         failure (Failure | None): The first failure seen, if any.
         reason (str): Why it's not_run, such as "timeout" or "skipped"; "" otherwise.
+        hits (tuple[str, ...]): The watched lines it ran in any run, such as "pkg/a.py:12",
+            sorted; empty when no lines were watched.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -78,6 +80,7 @@ class SideResult(BaseModel):
     statuses: tuple[str, ...]
     failure: Failure | None = None
     reason: str = ""
+    hits: tuple[str, ...] = ()
 
 
 class DiffOutcome(BaseModel):
@@ -157,20 +160,25 @@ def side_result(test: str, runs: Sequence[RunReport], runner: Runner) -> SideRes
     seen = [_status_in(test, run, runner) for run in runs]
     statuses = tuple(status for status, _ in seen)
     failure = next((failure for _, failure in seen if failure is not None), None)
+    hits = tuple(
+        sorted({hit for run in runs if test in run.results for hit in run.results[test].hits})
+    )
     known = {"passed", "failed", "error", "skipped", "missing"}
     problems = [status for status in statuses if status not in known]
     if problems or not statuses:
         reason = problems[0] if problems else "no runs"
-        return SideResult(verdict="not_run", statuses=statuses, failure=failure, reason=reason)
+        return SideResult(
+            verdict="not_run", statuses=statuses, failure=failure, reason=reason, hits=hits
+        )
     if all(status == "missing" for status in statuses):
         return SideResult(verdict="not_run", statuses=statuses, reason="not collected")
     if all(status == "skipped" for status in statuses):
-        return SideResult(verdict="not_run", statuses=statuses, reason="skipped")
+        return SideResult(verdict="not_run", statuses=statuses, reason="skipped", hits=hits)
     if all(status == "passed" for status in statuses):
-        return SideResult(verdict="pass", statuses=statuses)
+        return SideResult(verdict="pass", statuses=statuses, hits=hits)
     if all(status in ("failed", "error") for status in statuses):
-        return SideResult(verdict="fail", statuses=statuses, failure=failure)
-    return SideResult(verdict="flaky", statuses=statuses, failure=failure)
+        return SideResult(verdict="fail", statuses=statuses, failure=failure, hits=hits)
+    return SideResult(verdict="flaky", statuses=statuses, failure=failure, hits=hits)
 
 
 def combine(old: SideResult, new: SideResult) -> Outcome:

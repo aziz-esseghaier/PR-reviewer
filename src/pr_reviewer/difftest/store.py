@@ -20,6 +20,7 @@ from pr_reviewer.difftest.runner import (
     DiffResult,
     FileSpec,
     SideSpec,
+    Watch,
     request_key,
     run_diff,
 )
@@ -95,6 +96,7 @@ def diff_with_store(
     runs: int = RUNS_PER_SIDE,
     timeout: float | None = None,
     again: bool = False,
+    watch: Watch | None = None,
 ) -> DiffResult:
     """Give a differential run's result: the stored one, or a new run that's then stored.
 
@@ -110,18 +112,19 @@ def diff_with_store(
         runs (int): Runs per side.
         timeout (float | None): Seconds per run. None means the config's difftest limit.
         again (bool): Run even when a result is stored, and replace it.
+        watch (Watch | None): Lines for the pytest plugin to watch; None for none.
 
     Returns:
         DiffResult: Each test's outcome.
     """
     seconds = timeout if timeout is not None else ctx.config.timeouts.difftest_minutes * 60
-    key = request_key(ctx, pr, recipe, (old, new), files, targets, runs, seconds)
+    key = request_key(ctx, pr, recipe, (old, new), files, targets, runs, seconds, watch)
     if not again:
         found = find_diff(conn, key)
         if found is not None:
             return found
     result = run_diff(
-        ctx, pr, recipe, old, new, files, targets, runs=runs, timeout=seconds, key=key
+        ctx, pr, recipe, old, new, files, targets, runs=runs, timeout=seconds, key=key, watch=watch
     )
     save_diff(conn, result, runs)
     return result

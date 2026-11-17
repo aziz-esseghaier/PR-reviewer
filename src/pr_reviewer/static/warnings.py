@@ -92,14 +92,23 @@ class ToolWarning(BaseModel):
         """
         return any(self.line <= line <= self.end_line for line in lines)
 
-    def evidence(self) -> ToolEvidence:
+    def evidence(self, confirmed: bool = False) -> ToolEvidence:
         """Give the warning as tier-2 evidence.
+
+        Args:
+            confirmed (bool): Whether the verifier judged the warning to describe the claimed
+                problem; only then does the evidence back the claim.
 
         Returns:
             ToolEvidence: The same tool, rule, message, file and first line.
         """
         return ToolEvidence(
-            tool=self.tool, rule=self.rule, message=self.message, file=self.file, line=self.line
+            tool=self.tool,
+            rule=self.rule,
+            message=self.message,
+            file=self.file,
+            line=self.line,
+            confirmed=confirmed,
         )
 
     def text(self) -> str:

@@ -13,6 +13,8 @@ services:
     # timeout, and when that exits with an error, Postgres takes it for a crashed server process
     # and drops every connection.
     init: true
+    # Start again after a crash or a restart of Docker or the PC, unless we stopped it ourselves.
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
@@ -39,6 +41,7 @@ services:
   pgadmin:
     # Web tool to browse the tables, pinned to pgAdmin 9.18.0.
     image: dpage/pgadmin4:9.18.0
+    restart: unless-stopped
     environment:
       # pgAdmin reads its login only on the first start, when it creates the pgadmin-data volume.
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:?set PGADMIN_EMAIL in .env}

@@ -34,6 +34,8 @@ How to run (inside the conda env, from the project folder):
                                               changed lines, in its built environment (Docker)
     pr-reviewer review candidates             list every plausible problem, with those warnings
                                               and lookups in the repo (the candidate stage)
+    pr-reviewer evidence run | report         check each candidate with a generated test, the
+                                              static warnings or a verifier (the evidence stage)
     pr-reviewer sandbox build | repos | check | status | cleanup
                                               build the sandbox images, download the dev PRs'
                                               repos, check their checkouts, show or clean up
@@ -144,6 +146,7 @@ from pr_reviewer.db.connection import connect, extension_version, server_version
 from pr_reviewer.db.migrate import applied_migrations, discover_migrations, migrate
 from pr_reviewer.demo_graph import STATE_TYPES, DemoResult, new_thread_id, run_demo
 from pr_reviewer.difftest.commands import add_commands as add_difftest_commands
+from pr_reviewer.evidence.commands import add_commands as add_evidence_commands
 from pr_reviewer.reviewer.commands import add_commands as add_review_commands
 from pr_reviewer.sandbox.commands import add_commands as add_sandbox_commands
 from pr_reviewer.sandbox.image import ImageError
@@ -902,6 +905,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_setup_commands(commands, data_option)
     add_difftest_commands(commands, data_option)
     add_static_commands(commands, data_option)
+    add_evidence_commands(commands, data_option)
     return parser
 
 

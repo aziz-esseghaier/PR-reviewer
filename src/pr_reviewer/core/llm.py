@@ -12,12 +12,14 @@ For each request the client:
 4. sends it, retrying after rate limits, overload and timeouts (core/limits.py);
 5. records every try in the usage log, and saves the reply in the cache.
 Cache hits are recorded in the usage log too, but never count against a limit. When tracing is
-on, each call, cached or not, is also a step in LangSmith (core/tracing.py).
+on, each call, cached or not, is also a step in LangSmith (core/tracing.py). A request may
+offer tools; the model's tool calls come back in the reply for the caller to run.
 
 The file also lists a provider's models and turns provider errors into short hints.
 Other modules import it; the file isn't run directly.
 """
 
+import json
 import logging
 import time
 from collections.abc import Sequence
@@ -29,8 +31,10 @@ import openai
 from openai.types.chat import (
     ChatCompletion,
     ChatCompletionAssistantMessageParam,
+    ChatCompletionMessageFunctionToolCall,
     ChatCompletionMessageParam,
     ChatCompletionSystemMessageParam,
+    ChatCompletionToolUnionParam,
     ChatCompletionUserMessageParam,
     completion_create_params,
 )
@@ -87,6 +91,9 @@ class LLMRequest(BaseModel):
             text. Left at None, it isn't part of the cache key, so older keys stay valid.
         reasoning_effort (str | None): How long a reasoning model thinks, such as "medium".
             Like response_format, left out of the cache key when None.
+        tools (list[dict[str, Any]] | None): Tools the model may call, in the OpenAI format
+            ({"type": "function", "function": {...}}). The model then either answers or asks
+            for calls, which the caller runs. Left out of the cache key when None.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -99,6 +106,21 @@ class LLMRequest(BaseModel):
     sample: int = 0
     response_format: dict[str, Any] | None = None
     reasoning_effort: str | None = None
+    tools: list[dict[str, Any]] | None = None
+
+
+class ToolCall(BaseModel):
+    """One tool call the model asked for.
+
+    Attributes:
+        name (str): The tool's name, as the model wrote it.
+        arguments (str): Its arguments, as the JSON text the model wrote (not checked yet).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    arguments: str = ""
 
 
 class LLMResponse(BaseModel):
@@ -119,6 +141,8 @@ class LLMResponse(BaseModel):
             and between retries.
         cached (bool): True if the reply came from the cache. Tokens, timing, attempts and
             waits are then those of the original call, and no request was sent this time.
+        tool_calls (list[ToolCall]): The tool calls the model asked for, when the request
+            offered tools; then text is usually empty.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -134,6 +158,7 @@ class LLMResponse(BaseModel):
     attempts: int = 1
     waited_s: float = 0.0
     cached: bool = False
+    tool_calls: list[ToolCall] = []
 
 
 class ResponseCache(Protocol):
@@ -276,6 +301,7 @@ class LLMClient:
         *,
         sample: int = 0,
         response_format: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> LLMResponse:
         """Get the model's reply to a conversation, from the cache if it was asked before.
 
@@ -289,6 +315,9 @@ class LLMClient:
                 as a JSON schema, in the OpenAI format. The provider must support it. None
                 asks for plain text. The reply text still needs checking: not every
                 provider enforces the format strictly.
+            tools (list[dict[str, Any]] | None): Tools the model may call instead of
+                answering, in the OpenAI format; the reply's tool_calls then hold its calls.
+                Groq doesn't accept tools together with a response_format.
 
         Returns:
             LLMResponse: The reply text, token counts, timing and whether it came from the cache.
@@ -309,6 +338,7 @@ class LLMClient:
             sample=sample,
             response_format=response_format,
             reasoning_effort=self.profile.reasoning_effort,
+            tools=tools,
         )
         with trace_model_call(self.name, request) as trace:
             response = self._answer(request)
@@ -336,7 +366,7 @@ class LLMClient:
                 return saved.model_copy(update={"cached": True, "profile": self.name})
         response = self._send(request)
         # An empty reply is usually a glitch, so we don't keep it: the next call asks again.
-        if self._cache is not None and response.text:
+        if self._cache is not None and (response.text or response.tool_calls):
             self._cache.put(request, response)
         return response
 
@@ -355,9 +385,10 @@ class LLMClient:
             LimitError: If waiting won't help.
             LLMError: If the provider answers without any reply.
         """
-        estimate = estimate_tokens(
-            [message["content"] for message in request.messages], request.max_tokens
-        )
+        texts = [message["content"] for message in request.messages]
+        if request.tools:
+            texts.append(json.dumps(request.tools))
+        estimate = estimate_tokens(texts, request.max_tokens)
         limit_wait_s = 0.0
 
         def one_try() -> tuple[ChatCompletion, float]:
@@ -384,6 +415,11 @@ class LLMClient:
                 if request.reasoning_effort is None
                 else cast(ReasoningEffort, request.reasoning_effort)
             )
+            tools = (
+                openai.omit
+                if request.tools is None
+                else cast(list[ChatCompletionToolUnionParam], request.tools)
+            )
             try:
                 completion = self._sdk.chat.completions.create(
                     model=request.model,
@@ -392,6 +428,8 @@ class LLMClient:
                     max_tokens=request.max_tokens,
                     response_format=reply_format,
                     reasoning_effort=effort,
+                    tools=tools,
+                    tool_choice=openai.omit if request.tools is None else "auto",
                 )
             except openai.APIError as exc:
                 outcome, status = outcome_of(exc)
@@ -419,6 +457,11 @@ class LLMClient:
             raise LLMError(f"{self.name}: the provider returned no reply")
         choice = completion.choices[0]
         usage = completion.usage
+        calls = [
+            ToolCall(name=call.function.name, arguments=call.function.arguments or "")
+            for call in choice.message.tool_calls or []
+            if isinstance(call, ChatCompletionMessageFunctionToolCall)
+        ]
         return LLMResponse(
             profile=self.name,
             provider=self.provider_name,
@@ -430,6 +473,7 @@ class LLMClient:
             latency_s=round(latency_s, 3),
             attempts=result.attempts,
             waited_s=round(result.waited_s + limit_wait_s, 3),
+            tool_calls=calls,
         )
 
     def _wait_for_daily_room(self, estimate: int) -> float:
