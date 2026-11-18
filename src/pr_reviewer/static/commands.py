@@ -14,8 +14,9 @@ database running):
     pr-reviewer static run --limit 5          at most 5 PRs this time
     pr-reviewer static run --again            run again on PRs already stored
 Running it again only runs PRs not stored yet for the current tools and rules. It writes
-results/static-dev-<year>/ (config.json, summary.md). The candidate reviewer (`pr-reviewer
-review candidates`) needs every PR stored first.
+results/static-dev-<year>/ (config.json, summary.md). `--split test --unlock-test-set` runs it
+on the test set for the final run (results/static-test-<year>/). The candidate reviewer
+(`pr-reviewer review candidates`) needs every PR stored first.
 """
 
 import argparse
@@ -29,6 +30,7 @@ from typing import Any
 
 from pr_reviewer.benchmark.dataset import Instance
 from pr_reviewer.benchmark.results import results_folder, save_bench_prs
+from pr_reviewer.benchmark.split import split_options
 from pr_reviewer.context.commands import dev_scope
 from pr_reviewer.db.connection import connect
 from pr_reviewer.difftest.environments import PrepareError, pr_environment, ready_prepared
@@ -112,7 +114,7 @@ def summary_markdown(
     prs_with = Counter(tool for r in ran for tool in {w.tool for w in r.kept})
     rules = Counter((w.tool, w.rule) for r in ran for w in r.kept)
     lines = [
-        f"# Static tools: dev PRs from {settings['since']} on",
+        f"# Static tools: {settings.get('split', 'dev')} PRs from {settings['since']} on",
         "",
         f"- PRs: {len(prs)}; tools ran on {len(ran) - len(no_python)}; no Python line changed "
         f"{len(no_python)}; failed {len(failed)}; not run yet "
@@ -250,7 +252,7 @@ def _run(args: argparse.Namespace) -> int:
     Returns:
         int: Exit code, 0 when every PR in scope has a stored run.
     """
-    instances, in_scope, split = dev_scope(args.data, args.since)
+    instances, in_scope, split = dev_scope(args.data, args.since, args.split, args.unlock_test_set)
     chosen = _chosen(args.ids, in_scope, args.since)
     if chosen is None:
         return 1
@@ -266,7 +268,7 @@ def _run(args: argparse.Namespace) -> int:
         if args.limit:
             todo = todo[: args.limit]
         print(
-            f"Running the static tools on {len(todo)} of the {len(in_scope)} dev PRs from "
+            f"Running the static tools on {len(todo)} of the {len(in_scope)} {args.split} PRs from "
             f"{args.since} on ({tools.image}, settings {key[:12]})",
             flush=True,
         )
@@ -289,6 +291,7 @@ def _run(args: argparse.Namespace) -> int:
     }
     run_settings = {
         **asdict(settings),
+        "split": args.split,
         "since": args.since,
         "tools_image": tools.image,
         "tools_volume": tools.volume,
@@ -297,7 +300,7 @@ def _run(args: argparse.Namespace) -> int:
         "settings_key": key,
         "date": datetime.now(UTC).strftime("%Y-%m-%d"),
     }
-    folder = results_folder(f"static-dev-{args.since}")
+    folder = results_folder(f"static-{args.split}-{args.since}")
     _write(folder / "config.json", json.dumps(run_settings, indent=2) + "\n")
     _write(folder / "summary.md", summary_markdown(run_settings, in_scope, stored, results))
     waiting = len(scope - set(stored))
@@ -321,7 +324,9 @@ def add_commands(
     static = commands.add_parser("static", help="static tools on each PR's changed lines")
     sub = static.add_subparsers(metavar="STATIC_COMMAND", required=True)
     run = sub.add_parser(
-        "run", parents=[data_option], help="run ruff, mypy, bandit and semgrep (Docker)"
+        "run",
+        parents=[data_option, split_options()],
+        help="run ruff, mypy, bandit and semgrep (Docker)",
     )
     run.add_argument(
         "--since",

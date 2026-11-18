@@ -11,6 +11,7 @@ database running, after `pr-reviewer sandbox repos`):
     pr-reviewer setup report                write results/setup-dev/ (rates, failures, subset)
                                             for the dev PRs from 2022 onward
     pr-reviewer setup report --since 2019   the same, with the older ones
+Both take `--split test --unlock-test-set` for the final test-set run (results/setup-test/).
 """
 
 import argparse
@@ -20,7 +21,14 @@ from datetime import UTC, datetime
 from pr_reviewer.benchmark.dataset import Instance, load_dataset
 from pr_reviewer.benchmark.results import results_folder, save_bench_prs
 from pr_reviewer.benchmark.source import DATASET, default_dataset_path
-from pr_reviewer.benchmark.split import SPLIT_SHA256, Split, load_split, split_path, split_prs
+from pr_reviewer.benchmark.split import (
+    SPLIT_SHA256,
+    Split,
+    chosen_prs,
+    load_split,
+    split_options,
+    split_path,
+)
 from pr_reviewer.core.cache import PostgresCache
 from pr_reviewer.core.config import load_models_config
 from pr_reviewer.core.limits import LimitError
@@ -51,17 +59,18 @@ FIRST_SETUP_YEAR = 2022
 
 
 def _dev(args: argparse.Namespace) -> tuple[list[Instance], list[Instance], Split]:
-    """Load the dataset, the split and the dev PRs.
+    """Load the dataset, the split and the PRs of the chosen set (dev unless unlocked).
 
     Args:
-        args (argparse.Namespace): Parsed arguments. Uses `data`.
+        args (argparse.Namespace): Parsed arguments. Uses `data`, `split` and
+            `unlock_test_set`.
 
     Returns:
-        tuple[list[Instance], list[Instance], Split]: All PRs, the dev PRs, and the split.
+        tuple[list[Instance], list[Instance], Split]: All PRs, the set's PRs, and the split.
     """
     instances = load_dataset(args.data or default_dataset_path(), sha256=DATASET.sha256)
     split = load_split(split_path(), sha256=SPLIT_SHA256)
-    return instances, split_prs(instances, split, "dev"), split
+    return instances, chosen_prs(instances, split, args), split
 
 
 def _run(args: argparse.Namespace) -> int:
@@ -81,7 +90,7 @@ def _run(args: argparse.Namespace) -> int:
         chosen = [pr for pr in dev if pr.instance_id in wanted]
         if len(chosen) != len(wanted):
             missing = sorted(wanted - {pr.instance_id for pr in chosen})
-            print(f"Not dev PRs (or unknown): {', '.join(missing)}", file=sys.stderr)
+            print(f"Not {args.split} PRs (or unknown): {', '.join(missing)}", file=sys.stderr)
             return 1
     # Same repo and year together, so a PR finds the recipe the one before it made.
     chosen.sort(key=lambda pr: (pr.repo, pr.year, pr.created_at))
@@ -105,7 +114,7 @@ def _run(args: argparse.Namespace) -> int:
             conn=conn,
             hosts=config.proxy.allowed_hosts,
         )
-        print(f"Setting up {len(chosen)} dev PRs with {SETUP_PROFILE} (image {image})")
+        print(f"Setting up {len(chosen)} {args.split} PRs with {SETUP_PROFILE} (image {image})")
         verified = 0
         for number, pr in enumerate(chosen, start=1):
             print(f"[{number}/{len(chosen)}] {pr.instance_id} ({pr.year})", flush=True)
@@ -156,9 +165,9 @@ def _report(args: argparse.Namespace) -> int:
     with connect() as conn:
         runs = latest_runs(conn)
     settings = {
-        "name": "setup-dev",
+        "name": f"setup-{args.split}",
         "date": datetime.now(UTC).strftime("%Y-%m-%d"),
-        "split": "dev",
+        "split": args.split,
         "since": args.since,
         "agent_model": SETUP_PROFILE,
         "agent_model_id": load_models_config().profile(SETUP_PROFILE).model,
@@ -167,11 +176,11 @@ def _report(args: argparse.Namespace) -> int:
         "sandbox_limits": config.limits.model_dump(),
         "allowed_hosts": list(config.proxy.allowed_hosts),
     }
-    folder = results_folder("setup-dev")
+    folder = results_folder(f"setup-{args.split}")
     usable = write_report(folder, prs, runs, settings)
     tried = sum(pr.instance_id in runs for pr in prs)
     print(
-        f"{len(usable)} of {tried} set-up dev PRs from {args.since} onward verified. "
+        f"{len(usable)} of {tried} set-up {args.split} PRs from {args.since} onward verified. "
         f"Saved {folder} (summary.md)"
     )
     return 0
@@ -204,7 +213,7 @@ def add_commands(
     """
     setup = commands.add_parser("setup", help="build and check environments for the dev PRs")
     sub = setup.add_subparsers(metavar="SETUP_COMMAND", required=True)
-    run = sub.add_parser("run", parents=[data_option], help="set up dev PRs")
+    run = sub.add_parser("run", parents=[data_option, split_options()], help="set up dev PRs")
     _add_since(run)
     run.add_argument("--ids", nargs="+", default=None, help="only these dev PRs")
     run.add_argument("--limit", type=int, default=None, help="at most this many PRs")
@@ -213,7 +222,9 @@ def add_commands(
     )
     run.set_defaults(handler=_run)
     report = sub.add_parser(
-        "report", parents=[data_option], help="write results/setup-dev/ from the latest setups"
+        "report",
+        parents=[data_option, split_options()],
+        help="write results/setup-dev/ (or setup-test/) from the latest setups",
     )
     _add_since(report)
     report.set_defaults(handler=_report)

@@ -14,7 +14,8 @@ database running):
     pr-reviewer context check                 the retrieval check, for the run
                                               context-gpt-oss-120b: did the model see the code
                                               each known issue's fix commit changed?
-Running build again only retrieves PRs not stored yet for the current settings. The review
+build takes `--split test --unlock-test-set` for the final test-set run. Running build again
+only retrieves PRs not stored yet for the current settings. The review
 itself is `pr-reviewer review context`, which needs every PR's context built first.
 """
 
@@ -32,7 +33,13 @@ from pydantic import TypeAdapter
 from pr_reviewer.benchmark.dataset import Instance, load_dataset
 from pr_reviewer.benchmark.results import results_folder, save_bench_prs
 from pr_reviewer.benchmark.source import DATASET, default_dataset_path
-from pr_reviewer.benchmark.split import SPLIT_SHA256, load_split, split_path, split_prs
+from pr_reviewer.benchmark.split import (
+    SPLIT_SHA256,
+    load_split,
+    split_options,
+    split_path,
+    split_prs,
+)
 from pr_reviewer.context.candidates import KIND_ORDER, Candidates, FixFunctions, load_candidates
 from pr_reviewer.context.check import IssueCheck, check_pr, summary_markdown
 from pr_reviewer.context.probe import VERSION as PROBE_VERSION
@@ -58,20 +65,28 @@ from pr_reviewer.sandbox.runner import SandboxError, docker_client
 _FIXES = TypeAdapter(dict[str, FixFunctions])
 
 
-def dev_scope(data: Path | None, since: int) -> tuple[list[Instance], list[Instance], Any]:
-    """Load the dataset and the dev PRs from a year on.
+def dev_scope(
+    data: Path | None, since: int, which: str = "dev", unlock: bool = False
+) -> tuple[list[Instance], list[Instance], Any]:
+    """Load the dataset and one set's PRs from a year on (the dev set unless unlocked).
 
     Args:
         data (Path | None): The dataset file, or None for the default one.
         since (int): The first year.
+        which (str): "dev", or "test" for the final test-set run.
+        unlock (bool): True only for the final test-set run (--unlock-test-set).
 
     Returns:
-        tuple[list[Instance], list[Instance], Any]: Every PR, the dev PRs in scope, and the
+        tuple[list[Instance], list[Instance], Any]: Every PR, the set's PRs in scope, and the
         split.
+
+    Raises:
+        LockedTestSetError: If the test set is asked for without unlock.
     """
     instances = load_dataset(data or default_dataset_path(), sha256=DATASET.sha256)
     split = load_split(split_path(), sha256=SPLIT_SHA256)
-    in_scope = [pr for pr in split_prs(instances, split, "dev") if pr.year >= since]
+    chosen = split_prs(instances, split, "test" if which == "test" else "dev", unlock_test=unlock)
+    in_scope = [pr for pr in chosen if pr.year >= since]
     return instances, in_scope, split
 
 
@@ -91,7 +106,7 @@ def _chosen(ids: list[str] | None, in_scope: list[Instance], since: int) -> list
     chosen = [pr for pr in in_scope if pr.instance_id in set(ids)]
     if len(chosen) != len(set(ids)):
         missing = sorted(set(ids) - {pr.instance_id for pr in chosen})
-        print(f"Not dev PRs from {since} on (or unknown): {', '.join(missing)}", file=sys.stderr)
+        print(f"Not in scope from {since} on (or unknown): {', '.join(missing)}", file=sys.stderr)
         return None
     return chosen
 
@@ -137,7 +152,7 @@ def build_summary(
     calls = total.get("calls", 0) or 1
     seconds = [c.seconds for c in rows]
     lines = [
-        f"# Context retrieval: dev PRs from {settings['since']} on",
+        f"# Context retrieval: {settings.get('split', 'dev')} PRs from {settings['since']} on",
         "",
         f"- PRs: {len(prs)}; retrieved: {len(rows)}",
         f"- Indexer image: {settings['indexer_image']}; probe version {settings['probe_version']}",
@@ -203,7 +218,7 @@ def _build(args: argparse.Namespace) -> int:
     Returns:
         int: Exit code, 0 when every PR in scope has its context.
     """
-    instances, in_scope, split = dev_scope(args.data, args.since)
+    instances, in_scope, split = dev_scope(args.data, args.since, args.split, args.unlock_test_set)
     chosen = _chosen(args.ids, in_scope, args.since)
     if chosen is None:
         return 1
@@ -221,7 +236,7 @@ def _build(args: argparse.Namespace) -> int:
         if args.limit:
             todo = todo[: args.limit]
         print(
-            f"Retrieving context for {len(todo)} of the {len(in_scope)} dev PRs from "
+            f"Retrieving context for {len(todo)} of the {len(in_scope)} {args.split} PRs from "
             f"{args.since} on ({tag}, settings {key[:12]})",
             flush=True,
         )
@@ -238,9 +253,10 @@ def _build(args: argparse.Namespace) -> int:
         stored = stored_contexts(conn, key)
     scope_ids = {pr.instance_id for pr in in_scope}
     found = {i: load_candidates(path) for i, path in stored.items() if i in scope_ids}
-    folder = results_folder(f"context-dev-{args.since}")
+    folder = results_folder(f"context-{args.split}-{args.since}")
     run_settings = {
         **asdict(settings),
+        "split": args.split,
         "since": args.since,
         "indexer_image": tag,
         "probe_version": PROBE_VERSION,
@@ -342,7 +358,9 @@ def add_commands(
     context = commands.add_parser("context", help="the code around each PR's change (RAG)")
     sub = context.add_subparsers(metavar="CONTEXT_COMMAND", required=True)
     build = sub.add_parser(
-        "build", parents=[data_option], help="find each dev PR's candidate context (Docker)"
+        "build",
+        parents=[data_option, split_options()],
+        help="find each dev PR's candidate context (Docker)",
     )
     build.add_argument(
         "--since",

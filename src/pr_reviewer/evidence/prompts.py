@@ -88,6 +88,9 @@ that error says or holds (such as its message) rather than whether it's raised, 
 - No network, no files outside tmp_path, nothing slow: it must finish in a few seconds.
 - If the claimed code only exists in the pull request (a new function, class or argument), \
 write the test anyway: failing on the base commit because the code is missing is expected.
+- Never guard against missing code: no early return, no hasattr, no getattr with a default, \
+no skip, and no except that returns or passes. A guard makes the base commit pass without \
+running anything, so the test proves nothing.
 
 The file is saved at the path the request gives and run with pytest from the repository \
 root, three times on each commit, with the network off.
@@ -762,6 +765,80 @@ _FORBIDDEN = re.compile(
 )
 
 
+# Calls that skip a test from inside it, such as pytest.skip(...) or pytest.importorskip(...).
+_SKIPS = frozenset({"skip", "importorskip", "xfail"})
+
+
+def _inside(node: ast.AST) -> list[ast.AST]:
+    """List the nodes of a test function's body, leaving out nested functions and classes.
+
+    Args:
+        node (ast.AST): The test function.
+
+    Returns:
+        list[ast.AST]: Every node below it that runs as part of the test itself.
+    """
+    found: list[ast.AST] = []
+    todo = list(ast.iter_child_nodes(node))
+    while todo:
+        child = todo.pop()
+        if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef | ast.Lambda):
+            continue
+        found.append(child)
+        todo.extend(ast.iter_child_nodes(child))
+    return found
+
+
+def _swallows(handler: ast.ExceptHandler) -> bool:
+    """Tell whether an except block only ends the test or carries on quietly.
+
+    Args:
+        handler (ast.ExceptHandler): The block.
+
+    Returns:
+        bool: True when its body is only pass, return, continue, break or a bare constant.
+    """
+    quiet = (ast.Pass, ast.Return, ast.Continue, ast.Break)
+    return all(
+        isinstance(statement, quiet)
+        or (isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant))
+        for statement in handler.body
+    )
+
+
+def guard_in(test: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
+    """Find a guard that lets a test pass without running the code it checks.
+
+    A test proves a claim when it passes on the base commit and fails on the pull request. A
+    guard (an early return, hasattr, getattr with a default, a skip, or an except that
+    returns or passes) lets the base commit pass when the code is missing there, so the pass
+    proves nothing about the code.
+
+    Args:
+        test (ast.FunctionDef | ast.AsyncFunctionDef): The test function.
+
+    Returns:
+        str: The guard, such as "an early return", or "" when there's none.
+    """
+    for node in _inside(test):
+        if isinstance(node, ast.Return):
+            return "an early return"
+        if isinstance(node, ast.ExceptHandler) and _swallows(node):
+            return "an except that returns or passes"
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.id if isinstance(func, ast.Name) else ""
+        attr = func.attr if isinstance(func, ast.Attribute) else ""
+        if name == "hasattr":
+            return "hasattr"
+        if name == "getattr" and (len(node.args) > 2 or node.keywords):
+            return "getattr with a default"
+        if name in _SKIPS or attr in _SKIPS:
+            return f"{name or attr}()"
+    return ""
+
+
 def check_test(code: str, expected: str = "") -> str:
     """Check a generated test before it runs.
 
@@ -803,6 +880,13 @@ def check_test(code: str, expected: str = "") -> str:
     found = _FORBIDDEN.search(code)
     if found:
         return f"the test may not use {found.group(0).strip('( ')}"
+    guard = guard_in(tests[0])
+    if guard:
+        return (
+            f"the test has a guard ({guard}), so the base commit can pass without running "
+            "the code; remove it: if the code only exists in the pull request, failing on the "
+            "base commit is expected"
+        )
     if expected and expects_claimed_error(code, expected):
         name = expected.rsplit(".", 1)[-1]
         return (

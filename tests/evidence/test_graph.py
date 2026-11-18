@@ -271,6 +271,7 @@ def run(
     parallel: int = 1,
     saver: InMemorySaver | None = None,
     thread: str = "t1",
+    verifier: bool = True,
 ) -> list[dict[str, Any]]:
     """Run the PR graph on some candidates with fakes.
 
@@ -283,6 +284,7 @@ def run(
         parallel (int): Candidates at a time.
         saver (InMemorySaver | None): The checkpointer; None for a new one.
         thread (str): The thread ID.
+        verifier (bool): Whether the verifier runs.
 
     Returns:
         list[dict[str, Any]]: The records the graph returns.
@@ -316,6 +318,7 @@ def run(
         writer_budget=11_000,
         verify_budget=11_000,
         intent_budget=11_000,
+        verifier=verifier,
     )
     services = Services(
         llm=SerialClient(fake_client(model)),
@@ -406,6 +409,16 @@ def test_a_run_that_proves_nothing_goes_to_the_verifier() -> None:
     record = only(harness)
     assert (record.tier, record.test_result, record.verdict) == (3, "no_proof", "upheld")
     assert record.evidence[-1]["reasoning"].startswith("Cart(None)")
+
+
+def test_with_the_verifier_off_a_run_that_proves_nothing_ends_at_tier_4() -> None:
+    """Check the verifier is never asked when it's off, and the candidate gets no tier 3."""
+    model = RoutedModel({("test", "f1"): [wrote()]})
+    harness = Harness({"f1": [PASSES]})
+    run([candidate()], model, harness, verifier=False)
+    record = only(harness)
+    assert (record.tier, record.test_result, record.verdict) == (4, "no_proof", None)
+    assert model.count("verify", "f1") == 0 and record.calls == 1
 
 
 def test_the_test_writer_stops_at_its_budget() -> None:

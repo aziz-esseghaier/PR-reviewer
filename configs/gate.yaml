@@ -1,0 +1,17 @@
+# The gate: which checked findings become review comments. Chosen on the dev set and frozen
+# before the test-set run (src/pr_reviewer/gate/policy.py reads it).
+
+# Weakest evidence tier kept: 1 = executed proof only, 2 adds static-tool evidence, 3 adds
+# verifier-upheld reasoning, 4 keeps everything. On dev, tiers 2 and 3 added no hit.
+max_tier: 1
+
+# Lowest candidate confidence kept (0 to 1). 0 keeps every confidence: on so few proven
+# findings, the model's own confidence adds nothing.
+min_confidence: 0.0
+
+# Keep one finding per place: of findings on the same file with overlapping lines, keep the
+# best tier, then the highest confidence.
+dedupe: true
+
+# Most comments per PR, best first. null means no cap.
+max_per_pr: 3

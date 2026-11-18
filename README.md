@@ -150,7 +150,7 @@ pr-reviewer score reviews.jsonl --name a-baseline --reviewer none    # reviews w
 pr-reviewer score reviews.jsonl --name my-experiment --reviewer ... --since 2022   # only the PRs from 2022 on
 ```
 
-With `--since`, only the set's PRs from that year on are scored, and reviews of its older PRs in the file are ignored. Before the first judge call it checks that every dev PR has exactly one review, that no review is for another PR, and that the reviews weren't written by the judge's own model. The test set is refused unless `--split test --unlock-test-set` is given, which only the final test-set run does. Judge replies are cached, so a run stopped by the daily quota continues where it stopped when run again, and scoring the same reviews again costs nothing. A dev run is about 130 judge calls.
+With `--since`, only the set's PRs from that year on are scored, and reviews of its older PRs in the file are ignored. With `--usable-only`, only the PRs whose environment the setup agent verified are scored. Before the first judge call it checks that every dev PR has exactly one review, that no review is for another PR, and that the reviews weren't written by the judge's own model. The test set is refused unless `--split test --unlock-test-set` is given, which only the final test-set run does. Judge replies are cached, so a run stopped by the daily quota continues where it stopped when run again, and scoring the same reviews again costs nothing. A dev run is about 130 judge calls.
 
 Results go to `results/<name>/`: `config.json` (what was scored and how), `metrics.json` (SWR-Bench's metrics), `summary.md` (readable tables: PR-level accuracy and false alarms, then precision, recall and F1 of the review points, overall and for functional and evolvability issues apart), and `raw/` (the reviews and every judge reply, not in git). Per-PR counts also go to the `pr_scores` table, next to `bench_prs` (each PR's repo, year, kind and set), for grouping with SQL. Run `pr-reviewer db migrate` once to create those tables.
 
@@ -370,6 +370,41 @@ pr-reviewer evidence report               # write results/evidence-tools-gpt-oss
   - About 6.5 days on the free quota.
 
 `results/evidence-tools-gpt-oss-120b/` has the summary, the config and the 5 proving tests.
+
+**Fixes after the dev run.** Two weak spots of executed proof were fixed before the test-set run:
+- **Guards.** Our code now refuses a test with a guard that lets the base pass without running the code: an early `return`, `hasattr`, `getattr` with a default, a skip, or an `except` that returns or passes. The writer is told that failing at the base is fine for code the PR adds (a new-code proof).
+- **More signs of intent.** The intent check also looks for notes in the claimed file that say something changed ("changed to", `versionchanged`), deprecation warnings the PR removes, warning checks its tests remove, and test lines that call the changed method's class (tests often reach a private method through the public API).
+
+On the 5 dev proofs (`scripts/check_proof_fixes.py`), the guard check refuses 3 and the intent check marks 1 as deliberate. Tier 1 goes from 2 hits and 3 false alarms to 1 hit and 0 false alarms.
+
+`--no-verifier` skips the verifier: a candidate without an executed proof ends at tier 4. The gate below keeps only tier 1, and the verifier made over half the calls on dev, so the test-set run uses it.
+
+## Gate
+
+The gate decides which checked candidates become review comments. Its settings are in `configs/gate.yaml`, chosen on the dev set and frozen before the test-set run:
+- **Tier.** Keep only executed proofs (tier 1). On dev, tiers 2 and 3 added 24 comments and no hit.
+- **Confidence.** No cut. On so few proven findings, the reviewer's own confidence adds nothing.
+- **One comment per place.** Of findings on the same file with overlapping lines, keep the best tier, then the highest confidence.
+- **A cap.** At most 3 comments per PR, best first.
+
+Findings are taken best first (tier, then confidence), so a looser cutoff only ever adds comments. That keeps the precision/recall curve well defined.
+
+```
+pr-reviewer gate run --candidates <review run> --evidence <evidence run> --name <gated> --ungated-name <ungated>
+pr-reviewer score results/<gated>/raw/reviews.jsonl --name <gated> --reviewer reviewer-gpt-oss-120b --since 2022
+pr-reviewer score results/<ungated>/raw/reviews.jsonl --name <ungated> --reviewer reviewer-gpt-oss-120b --since 2022
+pr-reviewer gate report --candidates ... --evidence ... --name <gated> --ungated-name <ungated>
+```
+
+`gate run` writes two reviews of the same PRs, with no model call:
+- the gated one: only what passes the gate;
+- the ungated one: every candidate, exactly as the candidate run wrote it.
+
+Once both are scored, `gate report` writes `gate_report.md` (the headline table, the proof rate and the curve's points) and `curve.svg`.
+
+**The curve is estimated, not scored at every cutoff.** Scoring a review costs one judge call per PR, so scoring each cutoff would take days of the judge's free quota. Instead, the ungated review's judgment says, point by point, which points hit a known issue. A stricter cutoff keeps some of those points, so its score is estimated by dropping the others: a known issue stays hit only if a point that hit it is kept. SWR-Bench's formulas then give precision and recall. A second curve sorts by the reviewer's confidence alone, the comparison without evidence. On dev, the gate's estimate matched its official score exactly: 5 comments, 2 hits, precision 0.400.
+
+**The test-set run** (`--split test --unlock-test-set` on each command) covers the test PRs from 2022 onward whose environment the setup agent verified (`--usable-only`). It runs code frozen at one commit, so later edits can't reach it.
 
 ## Sandbox (Docker)
 

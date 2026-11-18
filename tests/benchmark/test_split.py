@@ -24,10 +24,12 @@ from pr_reviewer.benchmark.split import (
     SPLIT_FILE,
     SPLIT_SHA256,
     LockedTestSetError,
+    chosen_prs,
     ensure_unlocked,
     load_split,
     make_split,
     save_split,
+    split_options,
     split_prs,
 )
 from tests.benchmark.test_dataset import REAL_DATASET, make_row
@@ -130,6 +132,18 @@ def test_test_set_is_locked() -> None:
         pr.instance_id for pr in prs if pr.instance_id in split.test
     ]
     assert len(split_prs(prs, split, "dev")) == len(split.dev)
+
+
+def test_command_line_options_unlock_the_test_set_only_together() -> None:
+    """Check --split test needs --unlock-test-set, and dev is the default."""
+    prs = many_prs()
+    split = make_split(prs)
+    parser = split_options()
+    assert len(chosen_prs(prs, split, parser.parse_args([]))) == len(split.dev)
+    with pytest.raises(LockedTestSetError):
+        chosen_prs(prs, split, parser.parse_args(["--split", "test"]))
+    args = parser.parse_args(["--split", "test", "--unlock-test-set"])
+    assert len(chosen_prs(prs, split, args)) == len(split.test)
 
 
 def test_single_test_pr_is_locked() -> None:

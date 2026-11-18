@@ -143,6 +143,24 @@ def subset_metrics(
     )
 
 
+def kind_scores(
+    judgments: Sequence[dict[str, Any]], categories: Collection[str], letter: str
+) -> tuple[float, float, float]:
+    """Compute precision, recall and F1 over one kind of points and issues.
+
+    Args:
+        judgments (Sequence[dict[str, Any]]): The PRs' judgments.
+        categories (Collection[str]): Every SWR-Bench category code, such as "F.2".
+        letter (str): "F" for functional, "E" for evolvability.
+
+    Returns:
+        tuple[float, float, float]: Precision, recall and F1, as analyze_result() counts them.
+    """
+    types = [code for code in categories if code.startswith(letter)]
+    counts = [_type_counts(judgment, types) for judgment in judgments] or [(0, 0, 0)]
+    return _prf1(*(sum(column) for column in zip(*counts, strict=True)))
+
+
 def official_categories() -> list[str]:
     """Give SWR-Bench's category codes, from its scorer.
 

@@ -1,0 +1,26 @@
+# Scores: gated-dev-gpt-oss-120b
+
+- Reviews: `reviews.jsonl`, 68 PRs of the dev set from 2022 on (26 with known issues, 42 clean)
+- Reviewer: openai/gpt-oss-120b
+- Judge: gemini-3.5-flash-lite (temperature 0.0, replies up to 8,192 tokens), SWR-Bench's scorer at 67ae1d4
+- Scored: 2026-11-17
+
+## PR level: does the review flag PRs with issues and pass clean ones?
+
+| Accuracy | Precision | Recall | F1 | Flagged, with issues | Missed, with issues | False alarm, clean | Passed, clean |
+|---|---|---|---|---|---|---|---|
+| 0.691 | 1.000 | 0.192 | 0.323 | 5 | 21 | 0 | 42 |
+
+A review passes a PR when the judge reads it as approving, or finds no point in it.
+
+## Point level: do the review's points match the known issues?
+
+| Issues | Precision | Recall | F1 | Hits | False alarms | Misses |
+|---|---|---|---|---|---|---|
+| All | 0.400 | 0.035 | 0.065 | 2 | 3 | 55 |
+| Functional (F) | 0.400 | 0.069 | 0.118 | 2 | 3 | 27 |
+| Evolvability (E) | 0.000 | 0.000 | 0.000 | 0 | 0 | 28 |
+
+A point is a hit when it matches a known issue and a false alarm when it matches none (every point on a clean PR is one). A known issue no point matches is a miss. One point matching several issues counts as one hit, the rest as misses (SWR-Bench's rule). The F and E rows sort points by the category the judge gave them.
+
+Review points per PR: 0.07.

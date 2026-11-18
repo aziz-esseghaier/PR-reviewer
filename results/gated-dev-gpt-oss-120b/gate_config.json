@@ -1,0 +1,24 @@
+{
+  "name": "gated-dev-gpt-oss-120b",
+  "date": "2026-11-17",
+  "policy": {
+    "max_tier": 1,
+    "min_confidence": 0.0,
+    "dedupe": true,
+    "max_per_pr": 3
+  },
+  "candidates_run": "candidates-gpt-oss-120b",
+  "evidence_run": "evidence-tools-gpt-oss-120b",
+  "split": "dev",
+  "since": 2022,
+  "profile": "reviewer-gpt-oss-120b",
+  "model": "openai/gpt-oss-120b",
+  "evidence_settings": {
+    "prompts_sha256": "4f37967548d973ab57ec4773645ca5a44f3a03559555e963794ed23cdc51e071",
+    "matching_version": 3,
+    "verifier": null,
+    "profile": "evidence-gpt-oss-120b",
+    "model": "openai/gpt-oss-120b"
+  },
+  "failed_checks": 0
+}

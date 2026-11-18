@@ -239,6 +239,46 @@ def test_generated_tests_are_checked_before_they_run(code: str, problem: str) ->
     assert (problem in found) if problem else found == ""
 
 
+@pytest.mark.parametrize(
+    ("code", "guard"),
+    [
+        (
+            "def test_a(clf):\n    if not hasattr(clf, 'predict_proba'):\n        return\n"
+            "    clf.predict_proba(x)\n",
+            "an early return",
+        ),
+        ("def test_a(clf):\n    assert hasattr(clf, 'predict_proba')\n", "hasattr"),
+        (
+            "def test_a(mod):\n    lift = getattr(mod, '_lift', None)\n    if lift:\n"
+            "        lift(1)\n",
+            "getattr with a default",
+        ),
+        (
+            "def test_a():\n    try:\n        ser = series()\n    except PoleError:\n"
+            "        pass\n    assert ser\n",
+            "an except that returns or passes",
+        ),
+        ("import pytest\n\ndef test_a():\n    pytest.importorskip('dask')\n", "importorskip()"),
+        ("import pytest\n\ndef test_a():\n    pytest.skip('no')\n", "skip()"),
+        # Not guards: a helper's return, getattr without a default, an except that checks.
+        (
+            "def test_a():\n    def make():\n        return 1\n"
+            "    assert getattr(m, 'x') == make()\n",
+            "",
+        ),
+        (
+            "def test_a():\n    try:\n        read()\n    except ValueError as error:\n"
+            "        assert 'col' in str(error)\n",
+            "",
+        ),
+    ],
+)
+def test_a_guarded_test_is_refused(code: str, guard: str) -> None:
+    """Check guards that let the base commit pass without running the code are refused."""
+    found = check_test(code)
+    assert (f"has a guard ({guard})" in found) if guard else found == ""
+
+
 EXPECTS = (
     "import pytest\n\ndef test_a():\n    with pytest.raises(core.TableError):\n        read()\n"
 )

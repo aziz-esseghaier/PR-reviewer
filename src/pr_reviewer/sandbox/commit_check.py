@@ -389,7 +389,9 @@ def summary_markdown(checks: Sequence[CommitCheck], config: dict[str, Any]) -> s
     return "\n".join(lines) + "\n"
 
 
-def check_config(date: str, image: str, config: SandboxConfig, prs: int) -> dict[str, Any]:
+def check_config(
+    date: str, image: str, config: SandboxConfig, prs: int, split: str = "dev"
+) -> dict[str, Any]:
     """Describe a commit-check run, for config.json.
 
     Args:
@@ -397,14 +399,15 @@ def check_config(date: str, image: str, config: SandboxConfig, prs: int) -> dict
         image (str): The sandbox image's name and tag.
         config (SandboxConfig): The sandbox settings.
         prs (int): How many PRs were checked.
+        split (str): The set checked, "dev" or "test".
 
     Returns:
         dict[str, Any]: The config.
     """
     return {
-        "name": "commit-check",
+        "name": "commit-check" if split == "dev" else f"commit-check-{split}",
         "date": date,
-        "split": "dev",
+        "split": split,
         "prs": prs,
         "image": image,
         "limits": config.limits.model_dump(),

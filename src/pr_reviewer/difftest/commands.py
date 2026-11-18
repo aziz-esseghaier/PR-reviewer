@@ -14,6 +14,7 @@ database running):
         the same with a test file of your own, written at that path at both sides
     pr-reviewer difftest validate [--ids <id> ...] [--again]
         check the runner on known tests; writes results/difftest-validation/
+prepare and run take `--split test --unlock-test-set` for the final test-set run.
 """
 
 import argparse
@@ -25,7 +26,14 @@ from pathlib import Path
 from pr_reviewer.benchmark.dataset import Instance, load_dataset
 from pr_reviewer.benchmark.results import results_folder, save_bench_prs
 from pr_reviewer.benchmark.source import DATASET, default_dataset_path
-from pr_reviewer.benchmark.split import SPLIT_SHA256, load_split, split_path, split_prs
+from pr_reviewer.benchmark.split import (
+    SPLIT_SHA256,
+    SplitName,
+    load_split,
+    split_options,
+    split_path,
+    split_prs,
+)
 from pr_reviewer.db.connection import connect
 from pr_reviewer.difftest.environments import (
     PrepareError,
@@ -69,19 +77,23 @@ def _context() -> TryContext:
 
 
 def _dev(args: argparse.Namespace) -> tuple[list[Instance], list[Instance]]:
-    """Load all PRs and the dev PRs, and make sure bench_prs holds them.
+    """Load all PRs and the chosen set's PRs, and make sure bench_prs holds them.
 
     Args:
-        args (argparse.Namespace): Parsed arguments. Uses `data`.
+        args (argparse.Namespace): Parsed arguments. Uses `data`, and `split` and
+            `unlock_test_set` when the command has them (prepare and run); validate always
+            uses the dev set.
 
     Returns:
-        tuple[list[Instance], list[Instance]]: All PRs and the dev PRs.
+        tuple[list[Instance], list[Instance]]: All PRs and the set's PRs.
     """
     instances = load_dataset(args.data or default_dataset_path(), sha256=DATASET.sha256)
     split = load_split(split_path(), sha256=SPLIT_SHA256)
     with connect() as conn:
         save_bench_prs(conn, instances, split)
-    return instances, split_prs(instances, split, "dev")
+    which: SplitName = "test" if getattr(args, "split", "dev") == "test" else "dev"
+    unlock = getattr(args, "unlock_test_set", False)
+    return instances, split_prs(instances, split, which, unlock_test=unlock)
 
 
 def _chosen(dev: Sequence[Instance], ids: Sequence[str] | None) -> list[Instance]:
@@ -410,12 +422,16 @@ def add_commands(
     )
     sub = difftest.add_subparsers(metavar="DIFFTEST_COMMAND", required=True)
     prepare_cmd = sub.add_parser(
-        "prepare", parents=[data_option], help="save each set-up dev PR's base and PR-state images"
+        "prepare",
+        parents=[data_option, split_options()],
+        help="save each set-up dev PR's base and PR-state images",
     )
     prepare_cmd.add_argument("--ids", nargs="+", default=None, help="only these dev PRs")
     prepare_cmd.set_defaults(handler=_prepare)
     run = sub.add_parser(
-        "run", parents=[data_option], help="run tests at a dev PR's base and PR state"
+        "run",
+        parents=[data_option, split_options()],
+        help="run tests at a dev PR's base and PR state",
     )
     run.add_argument("instance_id", help="the dev PR, such as pydata__xarray-6260")
     run.add_argument(

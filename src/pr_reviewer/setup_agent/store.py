@@ -206,3 +206,15 @@ def latest_runs(conn: psycopg.Connection[TupleRow]) -> dict[str, dict[str, Any]]
             """
         ).fetchall()
     return {row["instance_id"]: row for row in rows}
+
+
+def usable_prs(conn: psycopg.Connection[TupleRow]) -> set[str]:
+    """Give the PRs whose most recent setup was verified (a working environment).
+
+    Args:
+        conn (psycopg.Connection[TupleRow]): Database connection.
+
+    Returns:
+        set[str]: Their instance IDs.
+    """
+    return {pr for pr, run in latest_runs(conn).items() if run.get("verified")}

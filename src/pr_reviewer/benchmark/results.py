@@ -44,6 +44,9 @@ NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 # The settings file of a review run (reviewer/commands.py), in the folder its scores go to.
 REVIEW_CONFIG = "review_config.json"
 
+# The settings file `pr-reviewer gate run` writes next to the reviews it makes.
+GATE_CONFIG_FILE = "gate_config.json"
+
 
 def results_folder(name: str) -> Path:
     """Give the folder of an experiment, after checking its name.
@@ -71,7 +74,8 @@ def check_folder(folder: Path, predictions_sha256: str) -> None:
 
     Scoring the same reviews again under the same name replaces the old results, which is how
     a stopped run is finished. Another reviews file needs another name. A folder that holds
-    only a review run, not scored yet, counts as free: its scores go next to it.
+    only a review run or a gate's reviews, not scored yet, counts as free: its scores go next
+    to it.
 
     Args:
         folder (Path): The experiment's folder.
@@ -83,7 +87,8 @@ def check_folder(folder: Path, predictions_sha256: str) -> None:
     if not folder.exists() or not any(folder.iterdir()):
         return
     config = folder / "config.json"
-    if not config.is_file() and (folder / REVIEW_CONFIG).is_file():
+    made_here = (folder / REVIEW_CONFIG).is_file() or (folder / GATE_CONFIG_FILE).is_file()
+    if not config.is_file() and made_here:
         return
     saved = json.loads(config.read_text(encoding="utf-8")) if config.is_file() else {}
     if saved.get("predictions", {}).get("sha256") != predictions_sha256:
@@ -108,6 +113,7 @@ class Experiment:
         judge (dict[str, Any]): The judge's profile, provider, model, temperature and max_tokens.
         since (int | None): Only the set's PRs from this year on were scored. None means all.
         with_issues (bool): Only the PRs with known issues were scored.
+        usable_only (bool): Only the PRs with a verified environment were scored.
     """
 
     name: str
@@ -120,17 +126,20 @@ class Experiment:
     judge: dict[str, Any]
     since: int | None = None
     with_issues: bool = False
+    usable_only: bool = False
 
     def config(self) -> dict[str, Any]:
         """Give the experiment as the JSON object saved in config.json.
 
         Returns:
-            dict[str, Any]: The config. "since" and "with_issues" appear only when a subset
-            was scored.
+            dict[str, Any]: The config. "since", "with_issues" and "usable_only" appear only
+            when a subset was scored.
         """
         subset: dict[str, Any] = {} if self.since is None else {"since": self.since}
         if self.with_issues:
             subset["with_issues"] = True
+        if self.usable_only:
+            subset["usable_only"] = True
         return {
             "name": self.name,
             "date": self.date,

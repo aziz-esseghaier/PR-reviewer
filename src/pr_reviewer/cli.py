@@ -147,11 +147,13 @@ from pr_reviewer.db.migrate import applied_migrations, discover_migrations, migr
 from pr_reviewer.demo_graph import STATE_TYPES, DemoResult, new_thread_id, run_demo
 from pr_reviewer.difftest.commands import add_commands as add_difftest_commands
 from pr_reviewer.evidence.commands import add_commands as add_evidence_commands
+from pr_reviewer.gate.commands import add_commands as add_gate_commands
 from pr_reviewer.reviewer.commands import add_commands as add_review_commands
 from pr_reviewer.sandbox.commands import add_commands as add_sandbox_commands
 from pr_reviewer.sandbox.image import ImageError
 from pr_reviewer.sandbox.runner import SandboxError
 from pr_reviewer.setup_agent.commands import add_commands as add_setup_commands
+from pr_reviewer.setup_agent.store import usable_prs
 from pr_reviewer.static.commands import add_commands as add_static_commands
 from pr_reviewer.static.tools import StaticError
 
@@ -661,6 +663,10 @@ def _score(args: argparse.Namespace) -> int:
     prs = [pr for pr in in_set if args.since is None or pr.year >= args.since]
     if args.with_issues:
         prs = [pr for pr in prs if pr.changes]
+    if args.usable_only:
+        with connect() as conn:
+            usable = usable_prs(conn)
+        prs = [pr for pr in prs if pr.instance_id in usable]
     if not prs:
         which = " with known issues" if args.with_issues else ""
         raise DatasetError(f"The {args.split} set has no PRs{which} from {args.since} on.")
@@ -691,11 +697,14 @@ def _score(args: argparse.Namespace) -> int:
         },
         since=args.since,
         with_issues=args.with_issues,
+        usable_only=args.usable_only,
     )
     total = len(predictions)
     subset = "" if args.since is None else f" from {args.since} on"
     if args.with_issues:
         subset += " with known issues"
+    if args.usable_only:
+        subset += " with a verified environment"
     print(f"Scoring {total} reviews of the {args.split} set{subset} from {predictions_path.name}")
     print(f"Judge: {JUDGE_MODEL}. Tracing: {describe_tracing()}")
 
@@ -897,6 +906,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="score only the PRs with known issues (for a run made with --with-issues)",
     )
+    score.add_argument(
+        "--usable-only",
+        action="store_true",
+        help="score only the PRs whose environment setup was verified (for a run made with "
+        "--usable-only)",
+    )
     score.set_defaults(handler=_score)
 
     add_review_commands(commands, data_option)
@@ -906,6 +921,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_difftest_commands(commands, data_option)
     add_static_commands(commands, data_option)
     add_evidence_commands(commands, data_option)
+    add_gate_commands(commands, data_option)
     return parser
 
 

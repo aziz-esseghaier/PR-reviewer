@@ -279,6 +279,9 @@ class PrInputs:
         writer_budget (int): Most characters of a test writer request's user message.
         verify_budget (int): The same for the verifier.
         intent_budget (int): The same for the intent check.
+        verifier (bool): Whether the verifier runs. Off, a candidate without an executed
+            proof ends at tier 4 with no verifier call: the gate keeps only tier 1, so tiers
+            2 and 3 aren't needed, and the verifier made over half the calls on dev.
     """
 
     pr: Instance
@@ -289,6 +292,7 @@ class PrInputs:
     writer_budget: int
     verify_budget: int
     intent_budget: int
+    verifier: bool = True
 
 
 @dataclass(frozen=True)
@@ -1073,6 +1077,8 @@ def build_candidate_graph(inputs: PrInputs, services: Services) -> Any:
 
     def verify(state: CandidateState) -> dict[str, Any]:
         """Ask the verifier to refute the claim, or for lookups first."""
+        if not inputs.verifier:
+            return {"route": "finish", "steps": [f"{state['finding_id']} verify: off"]}
         candidate = candidate_of(state)
         materials = materials_of(state)
         may_look = not state["verify_looked"]

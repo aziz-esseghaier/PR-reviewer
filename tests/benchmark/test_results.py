@@ -21,6 +21,7 @@ import pytest
 from psycopg.rows import TupleRow
 
 from pr_reviewer.benchmark.results import (
+    GATE_CONFIG_FILE,
     REVIEW_CONFIG,
     Experiment,
     check_folder,
@@ -135,13 +136,21 @@ def test_folder_is_reused_only_for_the_same_reviews(tmp_path: Path) -> None:
         check_folder(other, "a" * 64)
 
 
-def test_a_review_runs_folder_takes_its_scores(tmp_path: Path) -> None:
-    """Check a folder holding only a review run, not scored yet, is free for its scores."""
+@pytest.mark.parametrize("made_by", [REVIEW_CONFIG, GATE_CONFIG_FILE])
+def test_a_review_runs_folder_takes_its_scores(tmp_path: Path, made_by: str) -> None:
+    """Check a folder holding only a review run or a gate's reviews, not scored yet, is free
+    for its scores."""
     folder = tmp_path / "results" / "naive"
     (folder / "raw").mkdir(parents=True)
-    (folder / REVIEW_CONFIG).write_text("{}")
+    (folder / made_by).write_text("{}")
     (folder / "raw" / "reviews.jsonl").write_text("")
     check_folder(folder, "a" * 64)
+
+
+def test_a_usable_only_subset_is_named_in_the_config() -> None:
+    """Check usable_only appears in config.json only when set."""
+    assert "usable_only" not in EXPERIMENT.config()
+    assert replace(EXPERIMENT, usable_only=True).config()["usable_only"] is True
 
 
 def test_a_scored_subset_says_so() -> None:

@@ -45,7 +45,13 @@ from pr_reviewer.benchmark.dataset import Instance, load_dataset
 from pr_reviewer.benchmark.judge import check_reviewer
 from pr_reviewer.benchmark.results import results_folder, save_bench_prs
 from pr_reviewer.benchmark.source import DATASET, default_dataset_path
-from pr_reviewer.benchmark.split import SPLIT_SHA256, load_split, split_path, split_prs
+from pr_reviewer.benchmark.split import (
+    SPLIT_SHA256,
+    add_split_arguments,
+    chosen_prs,
+    load_split,
+    split_path,
+)
 from pr_reviewer.context.candidates import KIND_ORDER, load_candidates
 from pr_reviewer.context.lookups import Lookup, LookupLimits, LookupResult, run_lookups
 from pr_reviewer.context.probe import VERSION as PROBE_VERSION
@@ -87,6 +93,7 @@ from pr_reviewer.sandbox.commands import logs_dir
 from pr_reviewer.sandbox.config import SandboxConfig, load_sandbox_config
 from pr_reviewer.sandbox.repos import RepoError
 from pr_reviewer.sandbox.runner import SandboxError, docker_client
+from pr_reviewer.setup_agent.store import usable_prs
 from pr_reviewer.static.store import StoredStatic, stored_static
 from pr_reviewer.static.tools import static_setup
 
@@ -123,7 +130,7 @@ def _chosen(args: argparse.Namespace, in_scope: list[Instance]) -> list[Instance
     if len(chosen) != len(wanted):
         missing = sorted(wanted - {pr.instance_id for pr in chosen})
         print(
-            f"Not dev PRs from {args.since} on (or unknown): {', '.join(missing)}",
+            f"Not {args.split} PRs from {args.since} on (or unknown): {', '.join(missing)}",
             file=sys.stderr,
         )
         return None
@@ -283,9 +290,13 @@ def _review(args: argparse.Namespace, reviewer: str) -> int:
     """
     instances = load_dataset(args.data or default_dataset_path(), sha256=DATASET.sha256)
     split = load_split(split_path(), sha256=SPLIT_SHA256)
-    in_scope = [pr for pr in split_prs(instances, split, "dev") if pr.year >= args.since]
+    in_scope = [pr for pr in chosen_prs(instances, split, args) if pr.year >= args.since]
     if args.with_issues:
         in_scope = [pr for pr in in_scope if pr.changes]
+    if args.usable_only:
+        with connect() as conn:
+            usable = usable_prs(conn)
+        in_scope = [pr for pr in in_scope if pr.instance_id in usable]
     chosen = _chosen(args, in_scope)
     if chosen is None:
         return 1
@@ -297,7 +308,7 @@ def _review(args: argparse.Namespace, reviewer: str) -> int:
     settings: dict[str, Any] = {
         "name": args.name,
         "reviewer": reviewer,
-        "split": "dev",
+        "split": args.split,
         "since": args.since,
         "profile": REVIEWER_PROFILE,
         "provider": profile.provider,
@@ -316,6 +327,8 @@ def _review(args: argparse.Namespace, reviewer: str) -> int:
     if args.with_issues:
         # Only set when used, so earlier runs keep their settings (and thread IDs).
         settings["with_issues"] = True
+    if args.usable_only:
+        settings["usable_only"] = True
     key = static_key = ""
     sandbox_config = load_sandbox_config()
     if reviewer == "context":
@@ -367,7 +380,7 @@ def _review(args: argparse.Namespace, reviewer: str) -> int:
             reviewer=reviewer,
             profile=REVIEWER_PROFILE,
             model=model,
-            split="dev",
+            split=args.split,
             settings=settings,
         )
         status = review_status(conn, args.name)
@@ -379,9 +392,9 @@ def _review(args: argparse.Namespace, reviewer: str) -> int:
         )
         which = "with known issues " if args.with_issues else ""
         print(
-            f"Reviewing {len(todo)} of the {len(in_scope)} dev PRs {which}from {args.since} on "
-            f"with {REVIEWER_PROFILE} (run {args.name}, {reviewer} reviewer, up to {budget:,} "
-            "characters of request text)"
+            f"Reviewing {len(todo)} of the {len(in_scope)} {args.split} PRs {which}from "
+            f"{args.since} on with {REVIEWER_PROFILE} (run {args.name}, {reviewer} reviewer, "
+            f"up to {budget:,} characters of request text)"
         )
         lookups = LookupRunner(sandbox_config, LookupLimits())
         for number, pr in enumerate(todo, start=1):
@@ -452,6 +465,10 @@ def _review(args: argparse.Namespace, reviewer: str) -> int:
         return 1
     print(f"All {len(in_scope)} PRs reviewed. Saved {folder} (review_summary.md)")
     subset = " --with-issues" if args.with_issues else ""
+    if args.split == "test":
+        subset += " --split test --unlock-test-set"
+    if args.usable_only:
+        subset += " --usable-only"
     print(
         "Score it with:\n"
         f"  pr-reviewer score {predictions.relative_to(folder.parent.parent).as_posix()} "
@@ -530,6 +547,13 @@ def _add_run_options(parser: argparse.ArgumentParser, default_name: str) -> None
     )
     parser.add_argument("--ids", nargs="+", default=None, help="only these PRs of the run")
     parser.add_argument("--limit", type=int, default=None, help="at most this many PRs this time")
+    parser.add_argument(
+        "--usable-only",
+        action="store_true",
+        help="only the PRs whose environment setup was verified (setup failures are reported "
+        "apart)",
+    )
+    add_split_arguments(parser)
     parser.add_argument(
         "--with-issues",
         action="store_true",

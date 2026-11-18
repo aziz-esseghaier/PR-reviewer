@@ -1,7 +1,8 @@
 """The `pr-reviewer evidence ...` commands: check a review run's candidates for evidence.
 
 cli.py adds them to the `pr-reviewer` command. The candidates come from a dev review run; the
-test set stays locked until the final run.
+test set stays locked until the final run, which unlocks it with --split test
+--unlock-test-set.
 
 How to run (inside the conda env, from the project folder, with the database and Docker
 Desktop running):
@@ -13,8 +14,14 @@ Desktop running):
     pr-reviewer evidence run --ids <id> ...   only these PRs' candidates
     pr-reviewer evidence run --limit 3        at most 3 PRs this time
     pr-reviewer evidence run --parallel 1     one candidate at a time (default 2)
+    pr-reviewer evidence run --no-verifier    skip the verifier (only executed proofs count)
+    pr-reviewer evidence run --split test --unlock-test-set --source <test run> --name <name>
+                                              the final test-set run
     pr-reviewer evidence report               write results/<name>/ from what's saved (no
                                               model calls, no Docker)
+    pr-reviewer evidence report --labels <experiment>
+                                              label candidates with another scored experiment's
+                                              judge verdicts (such as the ungated test score)
 The run sleeps through the provider's quota waits (up to MAX_WAIT_S each). Running again
 continues the run: finished candidates are kept, a PR stopped by a longer wait or a Docker
 failure resumes where it stopped, and failed candidates get fresh replies. Model replies and
@@ -37,7 +44,13 @@ from pr_reviewer.benchmark.dataset import Instance, load_dataset
 from pr_reviewer.benchmark.judge import check_reviewer
 from pr_reviewer.benchmark.results import results_folder, save_bench_prs
 from pr_reviewer.benchmark.source import DATASET, default_dataset_path
-from pr_reviewer.benchmark.split import SPLIT_SHA256, load_split, split_path, split_prs
+from pr_reviewer.benchmark.split import (
+    SPLIT_SHA256,
+    add_split_arguments,
+    load_split,
+    split_path,
+    split_prs,
+)
 from pr_reviewer.context.candidates import Piece
 from pr_reviewer.context.candidates import load_candidates as load_context
 from pr_reviewer.context.lookups import LookupLimits
@@ -247,11 +260,14 @@ def _settings(args: argparse.Namespace, source: dict[str, Any], models: Any) -> 
         dict[str, Any]: The settings, as saved in the database.
 
     Raises:
-        ConfigError: If the source run isn't a dev run with context and static keys, or its
-            candidates came from another model (one model per run).
+        ConfigError: If the source run isn't a run of the chosen set with context and static
+            keys, or its candidates came from another model (one model per run).
     """
-    if source.get("split") != "dev":
-        raise ConfigError(f"{args.source} isn't a dev run; the test set stays locked.")
+    if source.get("split") != args.split:
+        raise ConfigError(
+            f"{args.source} is a {source.get('split')} run, not a {args.split} run; a test-set "
+            "run needs --split test --unlock-test-set."
+        )
     if "context" not in source or "static" not in source:
         raise ConfigError(f"{args.source} has no retrieved context or static warnings.")
     model = check_reviewer(EVIDENCE_PROFILE, models)
@@ -264,7 +280,7 @@ def _settings(args: argparse.Namespace, source: dict[str, Any], models: Any) -> 
     settings = {
         "name": args.name,
         "source_run": args.source,
-        "split": "dev",
+        "split": args.split,
         "profile": EVIDENCE_PROFILE,
         "provider": profile.provider,
         "model": model,
@@ -296,6 +312,9 @@ def _settings(args: argparse.Namespace, source: dict[str, Any], models: Any) -> 
         "dataset_sha256": DATASET.sha256,
         "split_sha256": SPLIT_SHA256,
     }
+    if args.no_verifier:
+        # Only set when used, so earlier runs keep their settings (and thread IDs).
+        settings["verifier"] = False
     # As saved in the database (tuples become lists), so a rerun compares equal.
     loaded: dict[str, Any] = json.loads(json.dumps(settings))
     return loaded
@@ -307,17 +326,18 @@ def _scope(
     """Pick the PRs whose candidates to check this time.
 
     Args:
-        args (argparse.Namespace): Parsed arguments. Uses `with_issues`, `clean` and `ids`.
+        args (argparse.Namespace): Parsed arguments. Uses `split`, `with_issues`, `clean` and
+            `ids`.
         candidates (dict[str, list[Candidate]]): The source run's candidates by PR.
-        dev (dict[str, Instance]): The dev PRs by ID.
+        dev (dict[str, Instance]): The chosen set's PRs by ID (dev unless unlocked).
 
     Returns:
         list[Instance] | None: The PRs, or None (after a message) when one asked for isn't
-        a dev PR with candidates.
+        a PR of the set with candidates.
     """
     unknown = sorted(pr for pr in candidates if pr not in dev)
     if unknown:
-        print(f"Not dev PRs (the test set is locked): {', '.join(unknown)}", file=sys.stderr)
+        print(f"Not {args.split} PRs: {', '.join(unknown)}", file=sys.stderr)
         return None
     prs = [dev[pr] for pr in sorted(candidates)]
     if args.with_issues:
@@ -338,8 +358,9 @@ def _run(args: argparse.Namespace) -> int:
     """Check the chosen PRs' candidates, and write the run's folder.
 
     Args:
-        args (argparse.Namespace): Parsed arguments. Uses `name`, `source`, `with_issues`,
-            `clean`, `ids`, `limit`, `parallel` and `data`.
+        args (argparse.Namespace): Parsed arguments. Uses `name`, `source`, `split`,
+            `unlock_test_set`, `no_verifier`, `with_issues`, `clean`, `ids`, `limit`,
+            `parallel` and `data`.
 
     Returns:
         int: Exit code, 0 when every candidate in this scope is checked.
@@ -349,7 +370,8 @@ def _run(args: argparse.Namespace) -> int:
         return 1
     instances = load_dataset(args.data or default_dataset_path(), sha256=DATASET.sha256)
     split = load_split(split_path(), sha256=SPLIT_SHA256)
-    dev = {pr.instance_id: pr for pr in split_prs(instances, split, "dev")}
+    chosen = split_prs(instances, split, args.split, unlock_test=args.unlock_test_set)
+    dev = {pr.instance_id: pr for pr in chosen}
     models = load_models_config()
     profile = models.profile(EVIDENCE_PROFILE)
     sandbox_config = load_sandbox_config()
@@ -400,7 +422,8 @@ def _run(args: argparse.Namespace) -> int:
         waiting = sum(len(left) for _, left in todo)
         print(
             f"Checking {waiting} candidates of {len(todo)} PRs from {args.source} with "
-            f"{EVIDENCE_PROFILE} (run {args.name}, {args.parallel} at a time)",
+            f"{EVIDENCE_PROFILE} (run {args.name}, {args.parallel} at a time"
+            + (", verifier off)" if args.no_verifier else ")"),
             flush=True,
         )
         for number, (pr, left) in enumerate(todo, start=1):
@@ -498,6 +521,7 @@ def _check_one(
         writer_budget=budget_chars(profile, TEST_PROMPT, LOOKUP_TOOLS),
         verify_budget=budget_chars(profile, VERIFY_PROMPT, LOOKUP_TOOLS),
         intent_budget=budget_chars(profile, INTENT_PROMPT),
+        verifier=not args.no_verifier,
     )
     hints = _hints(pieces)
 
@@ -565,14 +589,14 @@ def _report(args: argparse.Namespace) -> int:
     """Write the run's results folder from what's saved, with no model calls or Docker.
 
     Args:
-        args (argparse.Namespace): Parsed arguments. Uses `name` and `data`.
+        args (argparse.Namespace): Parsed arguments. Uses `name`, `labels`,
+            `unlock_test_set` and `data`.
 
     Returns:
         int: Exit code, 0 on success.
     """
     instances = load_dataset(args.data or default_dataset_path(), sha256=DATASET.sha256)
     split = load_split(split_path(), sha256=SPLIT_SHA256)
-    dev = {pr.instance_id: pr for pr in split_prs(instances, split, "dev")}
     with connect() as conn:
         row = conn.execute(
             "SELECT source_run, config FROM evidence_runs WHERE name = %s", (args.name,)
@@ -581,9 +605,12 @@ def _report(args: argparse.Namespace) -> int:
             print(f"There's no evidence run named {args.name!r}.", file=sys.stderr)
             return 1
         source_run, settings = row
+        which = settings.get("split", "dev")
+        chosen = split_prs(instances, split, which, unlock_test=args.unlock_test_set)
+        dev = {pr.instance_id: pr for pr in chosen}
         candidates = load_candidates(conn, source_run)
         records = load_records(conn, args.name)
-        labels = judge_labels(conn, source_run, candidates, dev)
+        labels = judge_labels(conn, args.labels or source_run, candidates, dev)
     _write(args, settings, records, candidates, labels)
     return 0
 
@@ -629,6 +656,12 @@ def add_commands(
         default=DEFAULT_PARALLEL,
         help=f"candidates checked at the same time (default: {DEFAULT_PARALLEL})",
     )
+    run.add_argument(
+        "--no-verifier",
+        action="store_true",
+        help="skip the verifier: candidates without an executed proof end at tier 4",
+    )
+    add_split_arguments(run)
     run.set_defaults(handler=_run)
     report = sub.add_parser(
         "report", parents=[data_option], help="write the run's results folder from what's saved"
@@ -637,5 +670,16 @@ def add_commands(
         "--name",
         default=DEFAULT_NAME,
         help=f"the run's name and results folder (default: {DEFAULT_NAME})",
+    )
+    report.add_argument(
+        "--labels",
+        default=None,
+        help="the scored experiment whose judge verdicts label the candidates (default: the "
+        "source run, as scored under its own name)",
+    )
+    report.add_argument(
+        "--unlock-test-set",
+        action="store_true",
+        help="needed to report a test-set run; only for the final test-set run",
     )
     report.set_defaults(handler=_report)

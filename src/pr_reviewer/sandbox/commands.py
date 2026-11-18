@@ -8,6 +8,7 @@ How to run (inside the conda env, from the project folder, with Docker Desktop r
     pr-reviewer sandbox build       build the sandbox and proxy images (first time ~11 minutes)
     pr-reviewer sandbox repos       download the dev PRs' repos and commits (~30 minutes once)
     pr-reviewer sandbox check       check every dev PR's commits and checkouts, offline
+    (repos and check take `--split test --unlock-test-set` for the final test-set run)
     pr-reviewer sandbox run <instance_id> [--at base|pr] [--network] -- <command> ...
                                     run one command in a fresh sandbox at that commit
     pr-reviewer sandbox status      show the images, the proxy, the repo copies and leftovers
@@ -28,10 +29,11 @@ from pr_reviewer.benchmark.results import results_folder, save_bench_prs
 from pr_reviewer.benchmark.source import DATASET, DatasetError, default_dataset_path
 from pr_reviewer.benchmark.split import (
     SPLIT_SHA256,
+    chosen_prs,
     ensure_unlocked,
     load_split,
+    split_options,
     split_path,
-    split_prs,
 )
 from pr_reviewer.core.config import project_root
 from pr_reviewer.db.connection import connect
@@ -62,17 +64,18 @@ def logs_dir() -> Path:
     return project_root() / LOGS
 
 
-def dev_prs(data: Path | None) -> list[Instance]:
-    """Load the dev set's PRs.
+def set_prs(args: argparse.Namespace) -> list[Instance]:
+    """Load the PRs of the set a command was asked for (dev unless the test set is unlocked).
 
     Args:
-        data (Path | None): The SWR-Bench dataset file. None means the default one.
+        args (argparse.Namespace): Parsed arguments. Uses `data`, `split` and
+            `unlock_test_set`.
 
     Returns:
-        list[Instance]: The dev PRs, in the split's order.
+        list[Instance]: The set's PRs, in dataset order.
     """
-    instances = load_dataset(data or default_dataset_path(), sha256=DATASET.sha256)
-    return split_prs(instances, load_split(split_path(), sha256=SPLIT_SHA256), "dev")
+    instances = load_dataset(args.data or default_dataset_path(), sha256=DATASET.sha256)
+    return chosen_prs(instances, load_split(split_path(), sha256=SPLIT_SHA256), args)
 
 
 def ready_image(client: DockerClient, config: SandboxConfig) -> str:
@@ -140,7 +143,7 @@ def _repos(args: argparse.Namespace) -> int:
     config = load_sandbox_config()
     tag = ready_image(client, config)
     by_repo: dict[str, list[Instance]] = defaultdict(list)
-    for pr in dev_prs(args.data):
+    for pr in set_prs(args):
         by_repo[pr.repo].append(pr)
     timeout = config.timeouts.download_minutes * 60
     print(f"Updating the shared copies of {len(by_repo)} repos in the volume {config.repos_volume}")
@@ -189,10 +192,10 @@ def _check(args: argparse.Namespace) -> int:
     tag = ready_image(client, config)
     instances = load_dataset(args.data or default_dataset_path(), sha256=DATASET.sha256)
     split = load_split(split_path(), sha256=SPLIT_SHA256)
-    prs = split_prs(instances, split, "dev")
+    prs = chosen_prs(instances, split, args)
     total = len(prs)
     done = 0
-    print(f"Checking {total} dev PRs in sandboxes with the network off")
+    print(f"Checking {total} {args.split} PRs in sandboxes with the network off")
 
     def show(check: CommitCheck) -> None:
         """Print one line per checked PR."""
@@ -210,9 +213,10 @@ def _check(args: argparse.Namespace) -> int:
         print(f"  [{done}/{total}] {check.instance_id}: {outcome}", flush=True)
 
     checks = check_prs(client, config, tag, prs, log_dir=logs_dir(), on_result=show)
-    folder = results_folder("commit-check")
     date = datetime.now(UTC).strftime("%Y-%m-%d")
-    write_check_results(folder, checks, check_config(date, tag, config, total))
+    described = check_config(date, tag, config, total, args.split)
+    folder = results_folder(described["name"])
+    write_check_results(folder, checks, described)
     with connect() as conn:
         save_bench_prs(conn, instances, split)
         save_checks(conn, checks)
@@ -334,11 +338,13 @@ def add_commands(
     sub = sandbox.add_subparsers(metavar="SANDBOX_COMMAND", required=True)
     sub.add_parser("build", help="build the sandbox image").set_defaults(handler=_build)
     sub.add_parser(
-        "repos", parents=[data_option], help="download the dev PRs' repos and commits"
+        "repos",
+        parents=[data_option, split_options()],
+        help="download the dev PRs' repos and commits",
     ).set_defaults(handler=_repos)
     sub.add_parser(
         "check",
-        parents=[data_option],
+        parents=[data_option, split_options()],
         help="check every dev PR's commits and checkouts, with the network off",
     ).set_defaults(handler=_check)
     run = sub.add_parser(

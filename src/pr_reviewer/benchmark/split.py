@@ -15,11 +15,13 @@ scripts/make_split.py makes the split once and saves it in configs/swrbench_spli
 kept in git. Its SHA-256 is pinned here, so an edited file is refused.
 
 The test set is locked: split_prs() and ensure_unlocked() refuse test PRs unless the caller
-passes unlock_test=True, which only the final test-set run does.
+passes unlock_test=True, which only the final test-set run does. On the command line that's
+`--split test --unlock-test-set` (split_options() and chosen_prs()).
 
 Imported by other modules; the file isn't run directly.
 """
 
+import argparse
 import hashlib
 import math
 from collections.abc import Sequence
@@ -245,6 +247,56 @@ def ensure_unlocked(split: Split, instance_id: str, *, unlock_test: bool = False
             f"{instance_id} is in the test set, which stays locked until the final test-set "
             "run. Use a dev PR instead."
         )
+
+
+def split_options() -> argparse.ArgumentParser:
+    """Make the parent parser of the --split and --unlock-test-set options.
+
+    The pipeline's commands (repos, setup, prepare, static, context, candidates, evidence,
+    gate) work on the dev set unless given both `--split test` and `--unlock-test-set`, which
+    only the final test-set run uses.
+
+    Returns:
+        argparse.ArgumentParser: The parent parser, to pass in `parents=[...]`.
+    """
+    parent = argparse.ArgumentParser(add_help=False)
+    add_split_arguments(parent)
+    return parent
+
+
+def add_split_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add the --split and --unlock-test-set options to a parser.
+
+    Args:
+        parser (argparse.ArgumentParser): The command's parser.
+    """
+    parser.add_argument(
+        "--split", choices=["dev", "test"], default="dev", help="the set to use (default: dev)"
+    )
+    parser.add_argument(
+        "--unlock-test-set",
+        action="store_true",
+        help="allow --split test; only for the final test-set run",
+    )
+
+
+def chosen_prs(
+    instances: Sequence[Instance], split: Split, args: argparse.Namespace
+) -> list[Instance]:
+    """Pick the PRs of the set a command was asked for.
+
+    Args:
+        instances (Sequence[Instance]): All PRs from the dataset.
+        split (Split): The split.
+        args (argparse.Namespace): Parsed arguments. Uses `split` and `unlock_test_set`.
+
+    Returns:
+        list[Instance]: The PRs of that set, in dataset order.
+
+    Raises:
+        LockedTestSetError: If the test set is asked for without --unlock-test-set.
+    """
+    return split_prs(instances, split, args.split, unlock_test=args.unlock_test_set)
 
 
 def split_prs(
