@@ -429,8 +429,10 @@ def _run(args: argparse.Namespace) -> int:
         for number, (pr, left) in enumerate(todo, start=1):
             print(f"[{number}/{len(todo)}] {pr.instance_id}: {len(left)} candidates", flush=True)
             try:
-                _check_one(
-                    args,
+                check_one(
+                    args.name,
+                    args.parallel,
+                    not args.no_verifier,
                     checkpointer,
                     ctx,
                     profile,
@@ -463,8 +465,10 @@ def _run(args: argparse.Namespace) -> int:
     return 0
 
 
-def _check_one(
-    args: argparse.Namespace,
+def check_one(
+    run: str,
+    parallel: int,
+    verifier: bool,
     checkpointer: Any,
     ctx: TryContext,
     profile: ModelProfile,
@@ -479,8 +483,12 @@ def _check_one(
 ) -> None:
     """Check one PR's remaining candidates with the PR graph.
 
+    The GitHub Action (integrations/pipeline.py) uses it too, on a live PR.
+
     Args:
-        args (argparse.Namespace): Parsed arguments. Uses `name` and `parallel`.
+        run (str): The evidence run's name.
+        parallel (int): Candidates checked at the same time.
+        verifier (bool): Whether the verifier runs (off in the test-set run and the Action).
         checkpointer (Any): Where the graphs' progress is saved.
         ctx (TryContext): Docker, the sandbox settings and the log folder.
         profile (ModelProfile): The model's profile, for the request sizes.
@@ -521,7 +529,7 @@ def _check_one(
         writer_budget=budget_chars(profile, TEST_PROMPT, LOOKUP_TOOLS),
         verify_budget=budget_chars(profile, VERIFY_PROMPT, LOOKUP_TOOLS),
         intent_budget=budget_chars(profile, INTENT_PROMPT),
-        verifier=not args.no_verifier,
+        verifier=verifier,
     )
     hints = _hints(pieces)
 
@@ -531,12 +539,12 @@ def _check_one(
 
     def save(record: EvidenceRecord) -> None:
         with connect() as own:
-            save_record(own, args.name, record)
+            save_record(own, run, record)
 
     services = Services(
         llm=llm,
         survey=survey,
-        run_test=_test_runner(args.name, ctx, pr, environment),
+        run_test=_test_runner(run, ctx, pr, environment),
         explore=lookups.for_pr(pr),
         save=save,
         show=lambda line: print(f"  {line}", flush=True),
@@ -549,13 +557,13 @@ def _check_one(
         fallback=partial(fallback_materials, pr),
     )
     round_ = max(failures for _, failures in left)
-    thread = f"{args.name}:{settings_key}:{pr.instance_id}:{round_}"
+    thread = f"{run}:{settings_key}:{pr.instance_id}:{round_}"
     check_pr(
         graph,
         pr.instance_id,
         left,
         thread,
-        parallel=args.parallel,
+        parallel=parallel,
         on_line=lambda line: print(f"  {line}", flush=True),
         tags=[EVIDENCE_PROFILE],
     )

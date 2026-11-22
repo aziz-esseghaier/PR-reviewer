@@ -203,10 +203,12 @@ def _chosen(ids: list[str] | None, in_scope: list[Instance], since: int) -> list
     return chosen
 
 
-def _run_one(
+def run_one(
     ctx: TryContext, tools: ReadyTools, pr: Instance, settings: StaticSettings, conn: Any, key: str
 ) -> str:
     """Run the tools on one PR and store the result, or record why they couldn't run.
+
+    The GitHub Action (integrations/pipeline.py) uses it too, on a live PR.
 
     Args:
         ctx (TryContext): Docker, the sandbox settings, the sandbox image and the log folder.
@@ -276,7 +278,7 @@ def _run(args: argparse.Namespace) -> int:
         for number, pr in enumerate(todo, start=1):
             print(f"[{number}/{len(todo)}] {pr.instance_id}", flush=True)
             try:
-                line = _run_one(ctx, tools, pr, settings, conn, key)
+                line = run_one(ctx, tools, pr, settings, conn, key)
             except SandboxError as exc:
                 stopped = str(exc)
                 print(f"  => Docker failed, stopping: {exc}", flush=True)

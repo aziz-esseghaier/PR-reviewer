@@ -406,6 +406,57 @@ Once both are scored, `gate report` writes `gate_report.md` (the headline table,
 
 **The test-set run** (`--split test --unlock-test-set` on each command) covers the test PRs from 2022 onward whose environment the setup agent verified (`--usable-only`). It runs code frozen at one commit, so later edits can't reach it.
 
+## GitHub Action
+
+`action.yml` runs the whole reviewer on a live pull request, with the settings of the test-set run, and posts what a test proved:
+1. It turns the pull request into the same object the benchmark uses, so every stage runs unchanged: setup, context, static tools, candidates, evidence (verifier off) and the gate (tier 1 only, at most 3 comments).
+2. For each finding the gate keeps, it posts an inline comment on the changed line: the problem, the proof ("passes on the base commit, fails on this pull request's commit with `ZeroDivisionError`") and the generated test in a collapsed block.
+3. It sends a short Slack message with what it proved, when a webhook is set.
+
+It runs on GitHub's machines, with its own database for the job, and pulls its Docker images from GitHub's registry.
+
+**Safety.**
+- It only comments. Every review is posted with the event `COMMENT`, fixed in code, and the client has no call that approves or merges.
+- PR code runs only in the sandboxes. The tokens and keys stay in the runner's environment and never enter a sandbox.
+- Pull requests from forks are skipped, since they get no secrets.
+- PR text and model output are untrusted. Comments escape the model's text, so it can't add links, HTML or mentions. The test sits in a code block its own backticks can't close. Our code builds every link, including the one in the Slack message.
+- A rerun doesn't post a finding twice: each comment carries a hidden fingerprint of its claim.
+
+**Use it** from a workflow in your repo. It needs two secrets: `GROQ_API_KEY`, and optionally `SLACK_WEBHOOK_URL`.
+
+```yaml
+on:
+  pull_request:
+    types: [opened, reopened]
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  review:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: <owner>/PR-reviewer@<commit>
+        with:
+          groq-api-key: ${{ secrets.GROQ_API_KEY }}
+          slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+```
+
+Build and publish the images once, from the Actions tab: the **Publish images** workflow (`.github/workflows/images.yml`). Make each package public on GitHub, so other repos can pull it.
+
+The same review runs from the command line, with Docker and the database running:
+
+```
+pr-reviewer action run --repo <owner/name> --pr <number> --dry-run   # print, don't post
+pr-reviewer action images                                           # the images it needs
+```
+
+**Limits.**
+- It reviews pull requests without merge commits, in repos whose tests run with pytest.
+- It uses the free Groq quota of the benchmark's model, so a big pull request can wait for quota.
+- A demo PR with a planted bug shows how it works, not how often it finds bugs. The benchmark measures that.
+
 ## Sandbox (Docker)
 
 PR code is untrusted, so it only ever runs inside Docker containers called sandboxes. Every sandbox:

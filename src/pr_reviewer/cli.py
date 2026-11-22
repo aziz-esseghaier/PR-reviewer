@@ -44,6 +44,9 @@ How to run (inside the conda env, from the project folder):
     pr-reviewer setup run | report            build and check environments for the dev PRs
     pr-reviewer difftest prepare | run | validate
                                               run tests before and after a dev PR, and compare
+    pr-reviewer action run --repo <owner/name> --pr <number>
+                                              review a live GitHub pull request and post what a
+                                              generated test proved (the GitHub Action)
 `python -m pr_reviewer.cli ...` works the same way.
 """
 
@@ -148,6 +151,7 @@ from pr_reviewer.demo_graph import STATE_TYPES, DemoResult, new_thread_id, run_d
 from pr_reviewer.difftest.commands import add_commands as add_difftest_commands
 from pr_reviewer.evidence.commands import add_commands as add_evidence_commands
 from pr_reviewer.gate.commands import add_commands as add_gate_commands
+from pr_reviewer.integrations.commands import add_commands as add_action_commands
 from pr_reviewer.reviewer.commands import add_commands as add_review_commands
 from pr_reviewer.sandbox.commands import add_commands as add_sandbox_commands
 from pr_reviewer.sandbox.image import ImageError
@@ -922,6 +926,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_static_commands(commands, data_option)
     add_evidence_commands(commands, data_option)
     add_gate_commands(commands, data_option)
+    add_action_commands(commands, data_option)
     return parser
 
 

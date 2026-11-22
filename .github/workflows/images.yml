@@ -1,0 +1,45 @@
+# Build the reviewer's Docker images and publish them to GitHub's container registry, so the
+# Action pulls them instead of building them on every pull request (the sandbox image alone
+# compiles an old Python). Run it by hand from the Actions tab after a Dockerfile changes.
+# Each image's tag is its Dockerfile's fingerprint, the same tag the Action looks for.
+name: Publish images
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  images:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pr-reviewer
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet --disable-pip-version-check .
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+
+      - name: Build the images
+        run: pr-reviewer action images --build
+
+      - name: Push them to ghcr.io
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          echo "$TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin
+          owner="${OWNER,,}"
+          for tag in $(pr-reviewer action images); do
+            docker tag "$tag" "ghcr.io/$owner/$tag"
+            docker push --quiet "ghcr.io/$owner/$tag"
+          done

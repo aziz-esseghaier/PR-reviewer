@@ -220,7 +220,7 @@ class LookupRunner:
         return explore
 
 
-def _static_input(stored: StoredStatic) -> StaticInput:
+def static_input(stored: StoredStatic) -> StaticInput:
     """Give a PR's static warnings on changed lines, for the candidate reviewer's request.
 
     Args:
@@ -235,13 +235,13 @@ def _static_input(stored: StoredStatic) -> StaticInput:
     return StaticInput("ok", tuple(result.kept))
 
 
-def _candidate_settings(
-    args: argparse.Namespace, profile: ModelProfile, config: SandboxConfig
+def candidate_settings(
+    variant: str, profile: ModelProfile, config: SandboxConfig
 ) -> tuple[dict[str, Any], int, str, str]:
     """Give the candidate reviewer's settings, its budget and the keys of its inputs.
 
     Args:
-        args (argparse.Namespace): Parsed arguments. Uses `variant`.
+        variant (str): The prompt variant, such as "v1".
         profile (ModelProfile): The reviewer's model profile.
         config (SandboxConfig): The sandbox settings.
 
@@ -249,7 +249,6 @@ def _candidate_settings(
         tuple[dict[str, Any], int, str, str]: The settings to add to the run's, the budget of
         the user message in characters, the retrieval key and the static key.
     """
-    variant = args.variant
     budget = candidate_reviewer.candidate_budget_chars(profile, candidate_reviewer.PROMPTS[variant])
     retrieval, indexer, retrieval_key, _ = retrieval_setup(config, profile)
     static, tools, static_key = static_setup(config)
@@ -343,7 +342,7 @@ def _review(args: argparse.Namespace, reviewer: str) -> int:
             "min_context_chars": MIN_CONTEXT_CHARS,
         }
     elif reviewer == "candidates":
-        extra, budget, key, static_key = _candidate_settings(args, profile, sandbox_config)
+        extra, budget, key, static_key = candidate_settings(args.variant, profile, sandbox_config)
         settings.update(extra)
     # As saved in the database (tuples become lists), so a rerun compares equal.
     settings = json.loads(json.dumps(settings))
@@ -413,7 +412,7 @@ def _review(args: argparse.Namespace, reviewer: str) -> int:
                         sample=failures,
                         budget_chars=budget,
                         variant=args.variant,
-                        static=_static_input(statics[pr.instance_id]),
+                        static=static_input(statics[pr.instance_id]),
                         pieces=load_candidates(contexts[pr.instance_id]).pieces,
                         explorer=lookups.for_pr(pr),
                         on_step=show,

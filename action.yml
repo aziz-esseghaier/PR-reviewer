@@ -1,0 +1,135 @@
+# The pr-reviewer GitHub Action: an evidence-first review of a pull request.
+# It posts an inline comment only when a generated test proves the problem (the test passes on
+# the base commit and fails on the pull request), with the test attached. It only comments: it
+# never approves, blocks or merges. Use it from a workflow on `pull_request` events; see the
+# README's "GitHub Action" section for the workflow and the secrets.
+#
+# PR code is untrusted: it only runs in the reviewer's Docker sandboxes, whose network goes
+# through an allow-list proxy while installing and is off while tests run. The tokens and keys
+# below stay in this runner's environment and are never passed into a sandbox.
+name: pr-reviewer
+description: >-
+  Evidence-first pull-request review for Python repos: comments only on bugs a generated test
+  proves, and never approves or merges.
+branding:
+  icon: check-circle
+  color: blue
+
+inputs:
+  groq-api-key:
+    description: Groq API key (free tier) for the reviewer's model, openai/gpt-oss-120b.
+    required: true
+  slack-webhook-url:
+    description: Slack incoming webhook address. When set, a message lists what was proven.
+    required: false
+    default: ""
+  github-token:
+    description: Token that reads the pull request and posts the review.
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check the event
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+      run: |
+        if [ "$EVENT_NAME" != "pull_request" ]; then
+          echo "::error::pr-reviewer runs on pull_request events only (this is $EVENT_NAME)."
+          exit 1
+        fi
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install pr-reviewer
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        python -m venv "$RUNNER_TEMP/pr-reviewer-venv"
+        "$RUNNER_TEMP/pr-reviewer-venv/bin/pip" install --quiet --disable-pip-version-check .
+        echo "$RUNNER_TEMP/pr-reviewer-venv/bin" >> "$GITHUB_PATH"
+
+    - name: Pull the reviewer's Docker images
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      env:
+        ACTION_REPO: ${{ github.action_repository }}
+      run: |
+        # The images are published from the action's own repo (see .github/workflows/images.yml).
+        # An image that can't be pulled is built instead, which takes much longer.
+        owner="${ACTION_REPO%%/*}"
+        if [ -z "$owner" ] && [[ "$GITHUB_ACTION_PATH" == */_actions/* ]]; then
+          # Actions are checked out at .../_actions/<owner>/<repo>/<ref>.
+          owner="$(basename "$(dirname "$(dirname "$GITHUB_ACTION_PATH")")")"
+        fi
+        owner="${owner,,}"
+        for tag in $(pr-reviewer action images); do
+          if [ -n "$owner" ] && docker pull --quiet "ghcr.io/$owner/$tag"; then
+            docker tag "ghcr.io/$owner/$tag" "$tag"
+          else
+            echo "::warning::Couldn't pull $tag; it will be built."
+          fi
+        done
+
+    - name: Start the database
+      shell: bash
+      run: |
+        # A fresh PostgreSQL for this job only, reachable from this runner alone.
+        password="$(openssl rand -hex 16)"
+        echo "::add-mask::$password"
+        {
+          echo "POSTGRES_HOST=127.0.0.1"
+          echo "POSTGRES_PORT=5432"
+          echo "POSTGRES_USER=pr_reviewer"
+          echo "POSTGRES_PASSWORD=$password"
+          echo "POSTGRES_DB=pr_reviewer"
+        } >> "$GITHUB_ENV"
+        docker run --detach --init --name pr-reviewer-db --publish 127.0.0.1:5432:5432 \
+          --env POSTGRES_USER=pr_reviewer --env POSTGRES_PASSWORD="$password" \
+          --env POSTGRES_DB=pr_reviewer pgvector/pgvector:0.8.7-pg18
+        for _ in $(seq 1 60); do
+          if docker exec pr-reviewer-db pg_isready -h 127.0.0.1 -U pr_reviewer -d pr_reviewer; then
+            exit 0
+          fi
+          sleep 2
+        done
+        echo "::error::The database didn't start."
+        exit 1
+
+    - name: Create the tables
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: pr-reviewer db migrate
+
+    - name: Restore the cached environment recipes
+      uses: actions/cache/restore@v4
+      with:
+        path: .pr-reviewer-recipes.json
+        key: pr-reviewer-recipes-${{ github.repository }}-${{ github.run_id }}
+        restore-keys: pr-reviewer-recipes-${{ github.repository }}-
+
+    - name: Review the pull request
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        GROQ_API_KEY: ${{ inputs.groq-api-key }}
+        SLACK_WEBHOOK_URL: ${{ inputs.slack-webhook-url }}
+        # Passed as variables, never pasted into the script, so no PR text reaches the shell.
+        REPO: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        RECIPES: ${{ github.workspace }}/.pr-reviewer-recipes.json
+        LANGSMITH_TRACING: "false"
+      run: pr-reviewer action run --repo "$REPO" --pr "$PR_NUMBER" --recipes "$RECIPES"
+
+    - name: Save the environment recipes for the next run
+      if: always() && hashFiles('.pr-reviewer-recipes.json') != ''
+      uses: actions/cache/save@v4
+      with:
+        path: .pr-reviewer-recipes.json
+        key: pr-reviewer-recipes-${{ github.repository }}-${{ github.run_id }}
