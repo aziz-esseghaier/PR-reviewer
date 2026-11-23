@@ -1,5 +1,7 @@
 # PR reviewer
 
+https://github.com/user-attachments/assets/230228ba-fbe6-40ec-b624-b1ead04ff74b
+
 PR reviewer is an AI reviewer for pull requests in Python repos. It comments on a problem only when a test proves it. For each problem it suspects, it writes a pytest test and runs it on the code before and after the change. The problem counts as proved when the test passes before the change and fails after it with the error the reviewer predicted. The comment shows the problem, the proof and the test.
 
 A review goes through these steps:
